@@ -35,9 +35,9 @@ Organización: categoría, tipo de talento, edad, alcaldía, programa y temporad
 - Usuario único de la app: "administrador" con todos los permisos (por ahora)
 - Fuente de datos: YouTube Data API v3
 
-## Roadmap (fase activa: 1)
-1. Diseño y fundación (modelo de datos, arquitectura, entorno)
-2. Autenticación y CRUD base
+## Roadmap (fase activa: 3 — plan en `docs/PHASE3_PLAN.md`; fase 2 en `docs/PHASE2_PLAN.md`)
+1. Diseño y fundación (modelo de datos, arquitectura, entorno) — completada
+2. Autenticación y CRUD base — completada
 3. Pipeline de ingesta (ETL con IA) + Staging Review
 4. Buscador y filtros
 5. Exportación a Excel/CSV

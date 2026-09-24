@@ -1,8 +1,8 @@
 # Modelo de datos — X Live Medios
 
-Fase 1. Deriva de la sección 5 de `PROJECT_BRIEF.md`. Tablas y columnas en inglés.
-No existe `Season` (no hay temporadas). Las tablas de staging de IA (Fase 3) y de
-usuarios (Fase 2) no se incluyen aquí.
+Deriva de la sección 5 de `PROJECT_BRIEF.md`. Tablas y columnas en inglés.
+No existe `Season` (no hay temporadas). Las tablas de staging de IA (Fase 3) no se
+incluyen aquí. `users` (Fase 2) se agrega abajo, sin relaciones con el resto.
 
 ## Diagrama ER
 
@@ -83,12 +83,20 @@ erDiagram
         int program_id FK "opcional"
         int part_of_video_id FK "opcional"
         string guest_status "pending | has_guests | no_guests"
+        string source "manual | youtube"
     }
     participations {
         int id PK
         int guest_id FK
         int video_id FK
         text notes "opcional"
+    }
+    users {
+        int id PK
+        string username UK
+        string password_hash
+        string role "administrador"
+        bool is_active
     }
 ```
 
@@ -97,7 +105,9 @@ erDiagram
 ### Catálogos
 `guest_categories`, `video_types`, `contact_types`, `boroughs` y `programs` comparten forma:
 `id`, `name` único, `is_active` (desactivar en lugar de borrar, para no romper referencias).
-Se administran desde la app (agregar, renombrar, desactivar; fusionar en Fase 2).
+Se administran desde la app (agregar, renombrar, desactivar). Fusionar categorías (FR-004) sigue pendiente.
+La unicidad del nombre se valida en la aplicación ignorando mayúsculas, acentos y espacios extra;
+la restricción `UNIQUE` de la BD solo cubre el nombre exacto.
 - Solo `boroughs` se precarga (16 alcaldías de CDMX). Los demás empiezan vacíos: no se inventan datos.
 - `guest_categories` = tipo de talento del invitado.
 
@@ -121,6 +131,11 @@ Relación N↔N Guest–GuestCategory. Clave primaria compuesta (`guest_id`, `ca
 - `video_type_id`, `program_id`, `event_borough_id`, `part_of_video_id`: todos opcionales.
 - `part_of_video_id` autorreferencia ("parte 2 de otro video"), `CHECK part_of_video_id <> id`.
 - `guest_status`: `pending` (aún sin revisar), `has_guests`, `no_guests` (propuesta de la IA, reclasificable por un humano; FR-014).
+- `source`: `manual` (cargado desde la app, migración `0004`) o `youtube` (lo trae la ingesta de la Fase 3). Permite localizar y borrar los videos de prueba cuando lleguen los reales. Los videos existentes al migrar quedan como `manual`.
+
+### users
+Usuarios de la app (migración `0003`). `username` único, contraseña solo como hash (argon2), `role` en texto
+(hoy solo `administrador`) e `is_active`. Sin relación con las demás tablas: aún no se registra quién hizo cada cambio.
 
 ### participations
 - Aparición de un invitado en un video (N↔N). `UNIQUE (guest_id, video_id)`.

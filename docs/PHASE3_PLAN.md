@@ -1,6 +1,6 @@
 # Plan — Fase 3: Pipeline de ingesta (ETL con IA) + Staging Review
 
-**Estado: propuesta, pendiente de aprobación** (nada implementado). Alcance según `PROJECT_BRIEF.md`
+**Estado: propuesta, pendiente de aprobación** (nada implementado). El usuario decidió detenerse al cerrar la Fase 2; cuando pida arrancar la Fase 3, primero se repasan con él las "Preguntas abiertas" de abajo y se ajusta este plan. Alcance según `PROJECT_BRIEF.md`
 (sección 7, FR-007, FR-009, FR-011, FR-013, FR-014 y "Pipeline ligero de IA"). Estado de partida:
 Fase 2 completada (auth, catálogos, invitados, contactos, videos manuales con `source`, participaciones).
 

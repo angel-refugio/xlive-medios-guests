@@ -22,6 +22,15 @@ Fuera de esta fase: buscador y filtros (4), exportación (5), re-contacto (6), c
 7. **Staging Review (backend y frontend)**: cola principal de candidatos pendientes; vista aparte para videos "sin invitados" (reclasificables); aceptar (crea o vincula invitado, participación y contactos con `source = video_description` y `verified = false`), editar antes de aceptar, o rechazar. Sugerir invitados existentes por nombre parecido para no duplicar (FR-001), reutilizando `normalize_name`.
 8. **Cierre**: documentación, revisión de pruebas y commit propuesto.
 
+## Antes de empezar la Fase 3: recorrido completo de la app (lo hace el usuario)
+Con el backend, el frontend y Docker corriendo, y datos reales, recorrer la app en el navegador:
+1. Iniciar sesión con el administrador.
+2. Crear un registro de catálogo (p. ej. un tipo de contacto y una categoría de invitado); probar el duplicado con otras mayúsculas/acentos.
+3. Crear un invitado con contacto (y una categoría nueva al vuelo).
+4. Crear un video manual y una participación (desde el video y desde el invitado).
+5. Borrar lo creado con su confirmación (participación, contacto, video, invitado) y comprobar que los catálogos siguen.
+Cualquier fallo se corrige antes de construir la Fase 3 encima. Opcional: ver los datos en pgAdmin (`http://localhost:5050`).
+
 ## Preguntas abiertas para el usuario (decidir antes del paso correspondiente)
 - **Clave de YouTube API** (paso 3): ¿quién la crea desde la cuenta de la empresa? Sin ella no se puede hacer una corrida real; el desarrollo y las pruebas usan respuestas simuladas.
 - **Modelo de Ollama** (paso 5): ¿cuál (~3B) y está instalado en el equipo? `OLLAMA_MODEL` sigue vacío.

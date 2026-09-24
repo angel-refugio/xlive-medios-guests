@@ -5,6 +5,7 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.catalogs import Borough, Program, VideoType
 
 
 class Video(Base):
@@ -16,6 +17,7 @@ class Video(Base):
         CheckConstraint(
             "guest_status IN ('pending', 'has_guests', 'no_guests')", name="guest_status_valid"
         ),
+        CheckConstraint("source IN ('manual', 'youtube')", name="source_valid"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -46,6 +48,13 @@ class Video(Base):
         String(20), server_default="pending", default="pending"
     )
 
+    # 'manual' = cargado a mano desde la app (p. ej. de prueba); 'youtube' = lo trae la ingesta.
+    # Permite listar y borrar los manuales cuando lleguen los videos reales.
+    source: Mapped[str] = mapped_column(String(20), server_default="manual", default="manual")
+
+    video_type: Mapped[VideoType | None] = relationship()
+    program: Mapped[Program | None] = relationship()
+    event_borough: Mapped[Borough | None] = relationship()
     participations: Mapped[list["Participation"]] = relationship(  # noqa: F821
         back_populates="video", cascade="all, delete-orphan", passive_deletes=True
     )

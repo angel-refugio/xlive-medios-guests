@@ -3,9 +3,11 @@ from app.models.catalogs import Borough, ContactType, GuestCategory, Program, Vi
 from app.models.contact import Contact
 from app.models.guest import Guest, guest_category_links
 from app.models.participation import Participation
+from app.models.user import User
 from app.models.video import Video
 
 __all__ = [
+    "User",
     "Borough",
     "Contact",
     "ContactType",

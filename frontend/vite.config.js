@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // El proxy evita CORS en desarrollo: /api/* se reenvía al backend en :8000.
@@ -13,5 +13,10 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: "./src/test/setup.js",
   },
 });

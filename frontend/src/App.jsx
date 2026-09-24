@@ -1,30 +1,40 @@
-import { useEffect, useState } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import RequireAuth from "./auth/RequireAuth.jsx";
+import Layout from "./components/Layout.jsx";
+import Catalogs from "./pages/Catalogs.jsx";
+import Home from "./pages/Home.jsx";
+import Login from "./pages/Login.jsx";
+import GuestDetail from "./pages/guests/GuestDetail.jsx";
+import GuestForm from "./pages/guests/GuestForm.jsx";
+import GuestList from "./pages/guests/GuestList.jsx";
+import VideoDetail from "./pages/videos/VideoDetail.jsx";
+import VideoForm from "./pages/videos/VideoForm.jsx";
+import VideoList from "./pages/videos/VideoList.jsx";
 
-// Pantalla mínima de la Fase 1: confirma la conexión frontend → API → BD.
+// El Router y el AuthProvider viven en main.jsx (y en las pruebas) para poder simular rutas.
 export default function App() {
-  const [estado, setEstado] = useState({ cargando: true, ok: false, detalle: "" });
-
-  useEffect(() => {
-    fetch("/api/health")
-      .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || `Error HTTP ${res.status}`);
-        setEstado({ cargando: false, ok: true, detalle: JSON.stringify(data) });
-      })
-      .catch((err) => {
-        console.error("[App.useEffect] Falló la consulta a /health:", err);
-        setEstado({ cargando: false, ok: false, detalle: err.message });
-      });
-  }, []);
-
   return (
-    <main style={{ fontFamily: "sans-serif", padding: "2rem" }}>
-      <h1>X Live Medios</h1>
-      <p>
-        Estado de la API:{" "}
-        {estado.cargando ? "consultando…" : estado.ok ? "✅ OK" : "❌ Error"}
-      </p>
-      {estado.detalle && <pre>{estado.detalle}</pre>}
-    </main>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<Home />} />
+        <Route path="catalogs/:key?" element={<Catalogs />} />
+        <Route path="guests" element={<GuestList />} />
+        <Route path="guests/new" element={<GuestForm />} />
+        <Route path="guests/:id" element={<GuestDetail />} />
+        <Route path="guests/:id/edit" element={<GuestForm />} />
+        <Route path="videos" element={<VideoList />} />
+        <Route path="videos/new" element={<VideoForm />} />
+        <Route path="videos/:id" element={<VideoDetail />} />
+        <Route path="videos/:id/edit" element={<VideoForm />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }

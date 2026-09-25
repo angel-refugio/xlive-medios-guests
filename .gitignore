@@ -16,6 +16,9 @@ venv/
 node_modules/
 frontend/dist/
 
+# Muestras de videos de YouTube (datos locales de análisis)
+backend/data/
+
 # Docker / datos locales
 pgdata/
 pgadmin-data/

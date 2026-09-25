@@ -33,6 +33,16 @@ def get_jwt_expire_minutes() -> int:
         raise RuntimeError(msg)
 
 
+def get_youtube_api_key() -> str:
+    """Clave de YouTube Data API v3. Lanza RuntimeError si no está configurada."""
+    key = os.environ.get("YOUTUBE_API_KEY")
+    if not key:
+        msg = "[app.core.config.get_youtube_api_key] Falta la variable de entorno YOUTUBE_API_KEY"
+        logger.error(msg)
+        raise RuntimeError(msg)
+    return key
+
+
 def get_database_url() -> str:
     """Construye la URL de conexión a PostgreSQL desde variables de entorno.
 

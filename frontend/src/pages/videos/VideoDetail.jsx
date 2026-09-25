@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api/client.js";
 import Participations from "../../components/Participations.jsx";
-import { GUEST_STATUS_LABELS, SOURCE_LABELS, dateOnly } from "./labels.js";
+import { GUEST_STATUS_LABELS, SOURCE_LABELS, dateOnly, youtubeUrl } from "./labels.js";
 
 export default function VideoDetail() {
   const { id } = useParams();
@@ -55,7 +55,12 @@ export default function VideoDetail() {
   if (!video) return <p className="muted">Cargando…</p>;
 
   const fields = [
-    ["ID de YouTube", video.youtube_video_id],
+    [
+      "ID de YouTube",
+      <a href={youtubeUrl(video.youtube_video_id)} target="_blank" rel="noopener noreferrer">
+        {video.youtube_video_id}
+      </a>,
+    ],
     ["Origen", SOURCE_LABELS[video.source] || video.source],
     ["Fecha de publicación", dateOnly(video.published_at)],
     ["Tipo de video", video.video_type?.name],

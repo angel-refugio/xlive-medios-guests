@@ -50,6 +50,15 @@ describe("Lista de videos", () => {
     expect(rows[2].textContent.match(/—/g)).toHaveLength(3); // sin fecha, tipo ni programa
   });
 
+  it("el ID de YouTube es un enlace directo al video que abre en otra pestaña", async () => {
+    createFakeBackend({ videos: [v1], pageSize: 50 });
+    renderApp("/videos");
+    const link = await screen.findByRole("link", { name: "abc123" });
+    expect(link).toHaveAttribute("href", "https://www.youtube.com/watch?v=abc123");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  });
+
   it("sin videos muestra un aviso", async () => {
     createFakeBackend();
     renderApp("/videos");
@@ -277,6 +286,14 @@ describe("Detalle de video", () => {
     for (const text of ["abc123", "Manual", "2024-05-01", "Entrevista", "Buenos días", "Con invitados", "Charla sobre su gira"]) {
       expect(screen.getByText(text)).toBeInTheDocument();
     }
+  });
+
+  it("el ID de YouTube enlaza directo al video para su revisión", async () => {
+    createFakeBackend({ videos: [v1] });
+    renderApp("/videos/1");
+    const link = await screen.findByRole("link", { name: "abc123" });
+    expect(link).toHaveAttribute("href", "https://www.youtube.com/watch?v=abc123");
+    expect(link).toHaveAttribute("target", "_blank");
   });
 
   it("un video parte de otro enlaza al original y muestra guiones donde falta información", async () => {

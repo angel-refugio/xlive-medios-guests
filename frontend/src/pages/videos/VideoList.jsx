@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client.js";
 import Pager from "../../components/Pager.jsx";
-import { GUEST_STATUS_LABELS, SOURCE_LABELS, dateOnly } from "./labels.js";
+import { GUEST_STATUS_LABELS, SOURCE_LABELS, dateOnly, youtubeUrl } from "./labels.js";
 
 export default function VideoList() {
   const [params, setParams] = useSearchParams();
@@ -89,7 +89,11 @@ export default function VideoList() {
                 <td>
                   <Link to={`/videos/${video.id}`}>{video.title}</Link>
                 </td>
-                <td>{video.youtube_video_id}</td>
+                <td>
+                  <a href={youtubeUrl(video.youtube_video_id)} target="_blank" rel="noopener noreferrer">
+                    {video.youtube_video_id}
+                  </a>
+                </td>
                 <td>{dateOnly(video.published_at) || "—"}</td>
                 <td>{video.video_type?.name || "—"}</td>
                 <td>{video.program?.name || "—"}</td>

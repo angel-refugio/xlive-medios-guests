@@ -11,11 +11,13 @@ export function createFakeBackend({
   pageSize = 2,
   onRequest,
 } = {}) {
+  // Copia profunda: los PATCH de la API simulada modifican los objetos, y si fueran los mismos
+  // que las constantes del archivo de pruebas, una prueba contaminaría a las siguientes.
   const db = {
-    guests: [...guests],
-    contacts: [...contacts],
-    videos: [...videos],
-    participations: [...participations],
+    guests: structuredClone(guests),
+    contacts: structuredClone(contacts),
+    videos: structuredClone(videos),
+    participations: structuredClone(participations),
     catalogs: {
       boroughs: [
         { id: 1, name: "Coyoacán", is_active: true },

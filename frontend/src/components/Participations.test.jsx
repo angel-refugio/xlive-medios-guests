@@ -94,6 +94,7 @@ describe("Participaciones desde el video", () => {
     });
     const user = userEvent.setup();
     renderApp("/videos/1");
+    await screen.findByRole("link", { name: "Ana López" }); // espera a que cargue el video
     await form().findByRole("option", { name: "Luis Pérez" });
     await user.selectOptions(form().getByLabelText("Invitado"), "Luis Pérez");
     await user.click(form().getByRole("button", { name: "Agregar participación" }));

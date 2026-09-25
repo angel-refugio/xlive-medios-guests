@@ -18,6 +18,8 @@ erDiagram
     videos ||--o{ participations : "incluye"
     video_types ||--o{ videos : "tipifica"
     programs |o--o{ videos : "agrupa"
+    programs ||--o{ program_host_links : "tiene"
+    hosts ||--o{ program_host_links : "conduce"
     videos |o--o{ videos : "parte de"
 
     guests {
@@ -67,6 +69,15 @@ erDiagram
         string name UK
         bool is_active
     }
+    hosts {
+        int id PK
+        string name UK
+        bool is_active
+    }
+    program_host_links {
+        int program_id PK,FK
+        int host_id PK,FK
+    }
     videos {
         int id PK
         string youtube_video_id UK
@@ -103,13 +114,19 @@ erDiagram
 ## Reglas por tabla
 
 ### Catálogos
-`guest_categories`, `video_types`, `contact_types`, `boroughs` y `programs` comparten forma:
+`guest_categories`, `video_types`, `contact_types`, `boroughs`, `programs` y `hosts` comparten forma:
 `id`, `name` único, `is_active` (desactivar en lugar de borrar, para no romper referencias).
 Se administran desde la app (agregar, renombrar, desactivar). Fusionar categorías (FR-004) sigue pendiente.
 La unicidad del nombre se valida en la aplicación ignorando mayúsculas, acentos y espacios extra;
 la restricción `UNIQUE` de la BD solo cubre el nombre exacto.
 - Solo `boroughs` se precarga (16 alcaldías de CDMX). Los demás empiezan vacíos: no se inventan datos.
 - `guest_categories` = tipo de talento del invitado.
+- `hosts` = conductores (quienes presentan un programa; no son invitados). Migración `0005`.
+
+### program_host_links
+Relación N↔N Program–Host, con clave primaria compuesta (`program_id`, `host_id`). Un programa puede tener
+varios conductores y un conductor varios programas. La asignación es por programa (no por video). Se edita
+desde Catálogos → Programas con `PUT /program-hosts/{program_id}` (reemplaza el conjunto completo).
 
 ### guests
 - Un registro por persona; no se duplica por aparecer en varios videos.

@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { NavLink, Navigate, useParams } from "react-router-dom";
 import { api } from "../api/client.js";
 
-// Los 5 catálogos comparten pantalla: solo cambia la ruta de la API.
+// Los 6 catálogos comparten pantalla: solo cambia la ruta de la API.
+// Los programas, además, permiten asignar sus conductores (catálogo "hosts").
 export const CATALOGS = [
   { key: "guest-categories", label: "Categorías de invitado" },
   { key: "boroughs", label: "Alcaldías" },
   { key: "video-types", label: "Tipos de video" },
   { key: "contact-types", label: "Tipos de contacto" },
   { key: "programs", label: "Programas" },
+  { key: "hosts", label: "Conductores" },
 ];
 
 export default function Catalogs() {
@@ -64,6 +66,66 @@ function CatalogManager({ catalog }) {
     load();
   }, [load]);
 
+  // Conductores de cada programa (solo en el catálogo de programas).
+  const isPrograms = catalog.key === "programs";
+  const [hosts, setHosts] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [hostsEditingId, setHostsEditingId] = useState(null);
+  const [selectedHostIds, setSelectedHostIds] = useState([]);
+
+  const loadHosts = useCallback(async () => {
+    if (!isPrograms) return;
+    try {
+      const [hostList, linkList] = await Promise.all([
+        api.get("/hosts", { include_inactive: true }),
+        api.get("/program-hosts"),
+      ]);
+      setHosts(hostList);
+      setLinks(linkList);
+    } catch (err) {
+      console.error("[pages.Catalogs.loadHosts] No se pudieron cargar los conductores:", err);
+      setRowError(err.message);
+    }
+  }, [isPrograms]);
+
+  useEffect(() => {
+    loadHosts();
+  }, [loadHosts]);
+
+  const hostIdsOf = (programId) => links.filter((l) => l.program_id === programId).map((l) => l.host_id);
+  const hostNamesOf = (programId) =>
+    hostIdsOf(programId)
+      .map((hostId) => hosts.find((h) => h.id === hostId)?.name)
+      .filter(Boolean)
+      .join(", ");
+
+  function startEditHosts(item) {
+    setRowError("");
+    setEditingId(null);
+    setHostsEditingId(item.id);
+    setSelectedHostIds(hostIdsOf(item.id));
+  }
+
+  function toggleHost(hostId) {
+    setSelectedHostIds((current) =>
+      current.includes(hostId) ? current.filter((id) => id !== hostId) : [...current, hostId]
+    );
+  }
+
+  async function saveHosts(item) {
+    setRowError("");
+    setBusy(true);
+    try {
+      await api.put(`/program-hosts/${item.id}`, { host_ids: selectedHostIds });
+      setHostsEditingId(null);
+      await loadHosts();
+    } catch (err) {
+      setRowError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onAdd(event) {
     event.preventDefault();
     setFormError("");
@@ -81,6 +143,7 @@ function CatalogManager({ catalog }) {
 
   function startEdit(item) {
     setRowError("");
+    setHostsEditingId(null);
     setEditingId(item.id);
     setEditName(item.name);
   }
@@ -174,13 +237,60 @@ function CatalogManager({ catalog }) {
                   Cancelar
                 </button>
               </form>
+            ) : isPrograms && hostsEditingId === item.id ? (
+              <form
+                className="inline-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  saveHosts(item);
+                }}
+              >
+                <fieldset>
+                  <legend>Conductores de {item.name}</legend>
+                  {hosts
+                    .filter((h) => h.is_active || selectedHostIds.includes(h.id))
+                    .map((h) => (
+                      <label key={h.id} className="check">
+                        <input
+                          type="checkbox"
+                          checked={selectedHostIds.includes(h.id)}
+                          onChange={() => toggleHost(h.id)}
+                        />
+                        {h.name}
+                        {!h.is_active && <em> (desactivado)</em>}
+                      </label>
+                    ))}
+                  {hosts.length === 0 && (
+                    <p className="muted">Primero crea conductores en la pestaña «Conductores».</p>
+                  )}
+                </fieldset>
+                <button type="submit" disabled={busy}>
+                  Guardar conductores
+                </button>
+                <button type="button" onClick={() => setHostsEditingId(null)}>
+                  Cancelar
+                </button>
+              </form>
             ) : (
               <>
                 <span className="item-name">
                   {item.name}
                   {!item.is_active && <em> (desactivado)</em>}
+                  {isPrograms && (
+                    <small className="muted"> · Conductores: {hostNamesOf(item.id) || "—"}</small>
+                  )}
                 </span>
                 <span className="item-actions">
+                  {isPrograms && (
+                    <button
+                      type="button"
+                      aria-label={`Conductores de ${item.name}`}
+                      onClick={() => startEditHosts(item)}
+                      disabled={busy}
+                    >
+                      Conductores
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label={`Renombrar ${item.name}`}

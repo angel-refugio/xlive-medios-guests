@@ -1,4 +1,4 @@
-"""Pruebas de los 5 catálogos: listar, crear, renombrar, desactivar y protección."""
+"""Pruebas de los 6 catálogos: listar, crear, renombrar, desactivar y protección."""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -14,7 +14,7 @@ from app.services.users import create_admin
 import app.models  # noqa: F401
 
 PASSWORD = "clave-segura-123"
-PREFIXES = ["/guest-categories", "/boroughs", "/video-types", "/contact-types", "/programs"]
+PREFIXES = ["/guest-categories", "/boroughs", "/video-types", "/contact-types", "/programs", "/hosts"]
 
 
 @pytest.fixture(autouse=True)

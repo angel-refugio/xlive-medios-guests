@@ -1,6 +1,6 @@
 """Catálogos configurables. Se desactivan (is_active) en lugar de borrarse."""
-from sqlalchemy import Boolean, String, true
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Boolean, Column, ForeignKey, String, Table, true
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -35,7 +35,23 @@ class ContactType(CatalogMixin, Base):
     __tablename__ = "contact_types"
 
 
+class Host(CatalogMixin, Base):
+    """Conductor: quien presenta un programa (no es un invitado)."""
+
+    __tablename__ = "hosts"
+
+
+program_host_links = Table(
+    "program_host_links",
+    Base.metadata,
+    Column("program_id", ForeignKey("programs.id", ondelete="CASCADE"), primary_key=True),
+    Column("host_id", ForeignKey("hosts.id", ondelete="RESTRICT"), primary_key=True),
+)
+
+
 class Program(CatalogMixin, Base):
-    """Programa del canal (opcional para los videos)."""
+    """Programa del canal (opcional para los videos) y sus conductores (N↔N)."""
 
     __tablename__ = "programs"
+
+    hosts: Mapped[list[Host]] = relationship(secondary=program_host_links)

@@ -1,10 +1,10 @@
-"""Endpoints de los 5 catálogos, generados con una sola fábrica de routers."""
+"""Endpoints de los 6 catálogos, generados con una sola fábrica de routers."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
 from app.db.session import get_db
-from app.models.catalogs import Borough, ContactType, GuestCategory, Program, VideoType
+from app.models.catalogs import Borough, ContactType, GuestCategory, Host, Program, VideoType
 from app.schemas.catalogs import CatalogCreate, CatalogOut, CatalogUpdate
 from app.services import catalogs as service
 
@@ -41,4 +41,5 @@ CATALOG_ROUTERS = [
     make_catalog_router("/video-types", VideoType, "video-types"),
     make_catalog_router("/contact-types", ContactType, "contact-types"),
     make_catalog_router("/programs", Program, "programs"),
+    make_catalog_router("/hosts", Host, "hosts"),
 ]

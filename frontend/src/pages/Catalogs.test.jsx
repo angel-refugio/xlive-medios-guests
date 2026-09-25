@@ -19,7 +19,15 @@ function fakeApi(initial = {}) {
     boroughs: [{ id: 10, name: "Coyoacán", is_active: true }],
     "video-types": [],
     "contact-types": [],
-    programs: [{ id: 20, name: "Buenos días", is_active: true }],
+    programs: [
+      { id: 20, name: "Buenos días", is_active: true },
+      { id: 21, name: "Circus TV", is_active: true },
+    ],
+    hosts: [
+      { id: 30, name: "Yaner", is_active: true },
+      { id: 31, name: "GM", is_active: true },
+    ],
+    links: [{ program_id: 21, host_id: 30 }], // vínculos programa ↔ conductor
     ...initial,
   };
   let nextId = 100;
@@ -27,6 +35,13 @@ function fakeApi(initial = {}) {
     if (url === "/api/auth/me") return fakeResponse(200, { username: "admin", role: "administrador" });
     const [pathname, query] = url.replace("/api", "").split("?");
     const [, key, id] = pathname.split("/");
+    if (key === "program-hosts") {
+      if ((options.method || "GET") === "GET") return fakeResponse(200, data.links);
+      const { host_ids } = JSON.parse(options.body);
+      data.links = data.links.filter((l) => l.program_id !== Number(id));
+      host_ids.forEach((host_id) => data.links.push({ program_id: Number(id), host_id }));
+      return fakeResponse(200, data.links.filter((l) => l.program_id === Number(id)));
+    }
     const list = data[key];
     if (!list) return fakeResponse(404, { detail: "no encontrado" });
     const method = options.method || "GET";
@@ -207,6 +222,73 @@ describe("Catálogos", () => {
     await waitFor(() =>
       expect(within(screen.getByText(/Actor/).closest("li")).getByRole("button", { name: "Desactivar Actor" })).toBeInTheDocument()
     );
+  });
+
+  it("hay un catálogo de conductores", async () => {
+    fakeApi();
+    renderCatalogs("/catalogs/hosts");
+    expect(await screen.findByRole("heading", { name: "Conductores" })).toBeInTheDocument();
+    expect(await screen.findByText("Yaner")).toBeInTheDocument();
+    expect(screen.getByText("GM")).toBeInTheDocument();
+  });
+
+  it("los programas muestran sus conductores (o un guion si no tienen)", async () => {
+    fakeApi();
+    renderCatalogs("/catalogs/programs");
+    const circus = (await screen.findByText(/Circus TV/)).closest("li");
+    await waitFor(() => expect(circus).toHaveTextContent("Conductores: Yaner"));
+    expect(screen.getByText(/Buenos días/).closest("li")).toHaveTextContent("Conductores: —");
+  });
+
+  it("asignar conductores a un programa: marca, guarda con PUT y refresca", async () => {
+    const { fetchMock, data } = fakeApi();
+    const user = userEvent.setup();
+    renderCatalogs("/catalogs/programs");
+    await screen.findByText(/Circus TV/);
+
+    await user.click(screen.getByRole("button", { name: "Conductores de Circus TV" }));
+    expect(screen.getByRole("checkbox", { name: "Yaner" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "GM" }));
+    await user.click(screen.getByRole("button", { name: "Guardar conductores" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Circus TV/).closest("li")).toHaveTextContent("Conductores: Yaner, GM")
+    );
+    const [url, options] = callsWith(fetchMock, "PUT")[0];
+    expect(url).toBe("/api/program-hosts/21");
+    expect(JSON.parse(options.body)).toEqual({ host_ids: [30, 31] });
+    expect(data.links).toHaveLength(2);
+  });
+
+  it("cancelar la asignación de conductores no envía nada", async () => {
+    const { fetchMock } = fakeApi();
+    const user = userEvent.setup();
+    renderCatalogs("/catalogs/programs");
+    await screen.findByText(/Circus TV/);
+    await user.click(screen.getByRole("button", { name: "Conductores de Circus TV" }));
+    await user.click(screen.getByRole("checkbox", { name: "GM" }));
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(callsWith(fetchMock, "PUT")).toHaveLength(0);
+    expect(screen.getByText(/Circus TV/).closest("li")).toHaveTextContent("Conductores: Yaner");
+  });
+
+  it("si guardar los conductores falla muestra el error", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockFetch((url, options) => {
+      if (url === "/api/auth/me") return fakeResponse(200, { username: "admin", role: "administrador" });
+      if (options.method === "PUT") return fakeResponse(422, { detail: "El conductor 31 no existe o está desactivado" });
+      if (url.startsWith("/api/programs")) return fakeResponse(200, [{ id: 21, name: "Circus TV", is_active: true }]);
+      if (url.startsWith("/api/hosts")) return fakeResponse(200, [{ id: 31, name: "GM", is_active: true }]);
+      if (url === "/api/program-hosts") return fakeResponse(200, []);
+      return fakeResponse(404, { detail: "no encontrado" });
+    });
+    const user = userEvent.setup();
+    renderCatalogs("/catalogs/programs");
+    await screen.findByText(/Circus TV/);
+    await user.click(screen.getByRole("button", { name: "Conductores de Circus TV" }));
+    await user.click(screen.getByRole("checkbox", { name: "GM" }));
+    await user.click(screen.getByRole("button", { name: "Guardar conductores" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("El conductor 31 no existe");
   });
 
   it("si la carga falla muestra el error", async () => {

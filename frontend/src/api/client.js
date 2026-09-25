@@ -107,6 +107,7 @@ export async function request(path, { method = "GET", body, params, auth = true 
 export const api = {
   get: (path, params) => request(path, { params }),
   post: (path, body) => request(path, { method: "POST", body }),
+  put: (path, body) => request(path, { method: "PUT", body }),
   patch: (path, body) => request(path, { method: "PATCH", body }),
   // Los borrados de la API exigen confirm=true; la UI debe pedir confirmación antes de llamar.
   del: (path) => request(path, { method: "DELETE", params: { confirm: true } }),

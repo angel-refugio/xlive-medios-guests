@@ -43,6 +43,21 @@ def get_youtube_api_key() -> str:
     return key
 
 
+def get_ollama_base_url() -> str:
+    """URL base del servidor Ollama local (OLLAMA_BASE_URL, por defecto localhost:11434)."""
+    return os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def get_ollama_model() -> str:
+    """Modelo de Ollama a usar en la ingesta. Lanza RuntimeError si no está configurado."""
+    model = os.environ.get("OLLAMA_MODEL")
+    if not model:
+        msg = "[app.core.config.get_ollama_model] Falta la variable de entorno OLLAMA_MODEL"
+        logger.error(msg)
+        raise RuntimeError(msg)
+    return model
+
+
 def get_database_url() -> str:
     """Construye la URL de conexión a PostgreSQL desde variables de entorno.
 

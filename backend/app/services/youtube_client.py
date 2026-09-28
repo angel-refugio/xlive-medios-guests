@@ -4,10 +4,15 @@ Cuota: channels.list, playlistItems.list y videos.list cuestan 1 unidad por llam
 (search.list cuesta 100, por eso no se usa).
 """
 import logging
+import re
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+_DURATION_RE = re.compile(
+    r"^P(?:(?P<days>\d+)D)?T?(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+)S)?$"
+)
 
 API_BASE = "https://www.googleapis.com/youtube/v3"
 TIMEOUT_SECONDS = 20.0
@@ -85,6 +90,8 @@ def get_video_details(client: httpx.Client, api_key: str, video_ids: list[str]) 
         )
         for item in data.get("items", []):
             snippet = item.get("snippet", {})
+            thumbnails = snippet.get("thumbnails", {})
+            best_thumbnail = thumbnails.get("high") or thumbnails.get("medium") or thumbnails.get("default")
             videos.append({
                 "id": item["id"],
                 "title": snippet.get("title", ""),
@@ -92,5 +99,21 @@ def get_video_details(client: httpx.Client, api_key: str, video_ids: list[str]) 
                 "published_at": snippet.get("publishedAt"),
                 "duration": item.get("contentDetails", {}).get("duration"),
                 "tags": snippet.get("tags", []),
+                "channel_id": snippet.get("channelId"),
+                "channel_title": snippet.get("channelTitle"),
+                "thumbnail_url": (best_thumbnail or {}).get("url"),
             })
     return videos
+
+
+def parse_duration(duration: str | None) -> int | None:
+    """Convierte una duración ISO 8601 de YouTube (p. ej. 'PT1H2M3S') a segundos."""
+    if not duration:
+        return None
+    match = _DURATION_RE.match(duration)
+    if not match:
+        msg = f"[app.services.youtube_client.parse_duration] Duración no reconocida: {duration!r}"
+        logger.error(msg)
+        raise YouTubeError(msg)
+    parts = {key: int(value) if value else 0 for key, value in match.groupdict().items()}
+    return parts["days"] * 86400 + parts["hours"] * 3600 + parts["minutes"] * 60 + parts["seconds"]

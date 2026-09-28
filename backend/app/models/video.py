@@ -44,6 +44,15 @@ class Video(Base):
     part_of_video_id: Mapped[int | None] = mapped_column(
         ForeignKey("videos.id", ondelete="SET NULL")
     )
+    # Señalado por la ingesta como "posible duplicado" (título+descripción parecidos y
+    # published_at cercano); nunca se fusiona ni descarta solo, un humano lo confirma o
+    # limpia el campo desde la app.
+    possible_duplicate_of_video_id: Mapped[int | None] = mapped_column(
+        ForeignKey("videos.id", ondelete="SET NULL")
+    )
+    # Cuándo lo procesó por última vez el orquestador (reglas + LLM); null = todavía no.
+    # Permite que una corrida omita lo ya procesado sin duplicar candidatos (idempotencia).
+    last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     guest_status: Mapped[str] = mapped_column(
         String(20), server_default="pending", default="pending"
     )

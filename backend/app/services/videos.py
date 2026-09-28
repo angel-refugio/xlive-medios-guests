@@ -57,11 +57,16 @@ def _ensure_unique_youtube_id(db: Session, youtube_id: str, exclude_id: int | No
 
 
 def list_videos(
-    db: Session, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, source: str | None = None
+    db: Session, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, source: str | None = None,
+    guest_status: str | None = None,
 ) -> tuple[list[Video], int]:
     page = max(page, 1)
     page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
-    filters = [Video.source == source] if source else []
+    filters = []
+    if source:
+        filters.append(Video.source == source)
+    if guest_status:
+        filters.append(Video.guest_status == guest_status)
     total = db.execute(select(func.count(Video.id)).where(*filters)).scalar_one()
     stmt = (
         select(Video)

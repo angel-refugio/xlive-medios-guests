@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
 from app.db.session import get_db
-from app.schemas.videos import VideoCreate, VideoOut, VideoPage, VideoSource, VideoUpdate
+from app.schemas.videos import GuestStatus, VideoCreate, VideoOut, VideoPage, VideoSource, VideoUpdate
 from app.services import videos as service
 from app.services.guests import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, InvalidReferenceError
 
@@ -24,9 +24,10 @@ def list_videos(
     page: int = Query(1, ge=1),
     page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE),
     source: VideoSource | None = None,
+    guest_status: GuestStatus | None = None,
     db: Session = Depends(get_db),
 ):
-    items, total = service.list_videos(db, page, page_size, source)
+    items, total = service.list_videos(db, page, page_size, source, guest_status)
     return VideoPage(items=items, total=total, page=page, page_size=page_size)
 
 

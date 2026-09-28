@@ -3,7 +3,7 @@ import logging
 
 from fastapi import FastAPI
 
-from app.api import auth, contacts, guests, health, participations, program_hosts, videos
+from app.api import auth, contacts, guests, health, participations, program_hosts, staging, videos
 from app.api.catalogs import CATALOG_ROUTERS
 
 logging.basicConfig(
@@ -22,3 +22,4 @@ app.include_router(contacts.router)
 app.include_router(videos.router)
 app.include_router(participations.guest_router)
 app.include_router(participations.video_router)
+app.include_router(staging.router)

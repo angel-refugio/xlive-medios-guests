@@ -83,6 +83,62 @@ def test_get_video_details_parte_en_lotes(client):
     assert videos[0]["title"] == "Título vid000"
 
 
+def test_get_video_details_incluye_canal_y_miniatura():
+    def fake(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [{
+            "id": "abc",
+            "snippet": {
+                "title": "T", "description": "D", "publishedAt": "2024-01-01T00:00:00Z",
+                "channelId": "UCabc", "channelTitle": "X Live Medios",
+                "thumbnails": {
+                    "default": {"url": "http://x/default.jpg"},
+                    "high": {"url": "http://x/high.jpg"},
+                },
+            },
+            "contentDetails": {"duration": "PT1H2M3S"},
+        }]})
+
+    with httpx.Client(transport=httpx.MockTransport(fake)) as c:
+        video = youtube_client.get_video_details(c, "k", ["abc"])[0]
+    assert video["channel_id"] == "UCabc"
+    assert video["channel_title"] == "X Live Medios"
+    assert video["thumbnail_url"] == "http://x/high.jpg"  # prefiere high sobre default
+
+
+def test_get_video_details_sin_miniatura_no_falla():
+    def fake(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [{
+            "id": "abc",
+            "snippet": {"title": "T"},
+            "contentDetails": {},
+        }]})
+
+    with httpx.Client(transport=httpx.MockTransport(fake)) as c:
+        video = youtube_client.get_video_details(c, "k", ["abc"])[0]
+    assert video["thumbnail_url"] is None
+    assert video["channel_id"] is None
+
+
+@pytest.mark.parametrize("duration,seconds", [
+    ("PT10M", 600),
+    ("PT1H2M3S", 3723),
+    ("PT45S", 45),
+    ("P1D", 86400),
+    ("PT0S", 0),
+])
+def test_parse_duration(duration, seconds):
+    assert youtube_client.parse_duration(duration) == seconds
+
+
+def test_parse_duration_sin_dato():
+    assert youtube_client.parse_duration(None) is None
+
+
+def test_parse_duration_invalida():
+    with pytest.raises(YouTubeError, match="parse_duration"):
+        youtube_client.parse_duration("no es una duración")
+
+
 def test_pick_ids_reproducible_y_sin_excluidos():
     excluded = set(ALL_IDS[:10])
     a = sample_videos.pick_ids(ALL_IDS, excluded, 30, seed=1)

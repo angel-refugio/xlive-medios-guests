@@ -10,6 +10,12 @@ from app.models.catalogs import (
 )
 from app.models.contact import Contact
 from app.models.guest import Guest, guest_category_links
+from app.models.ingestion import (
+    IngestionRun,
+    IngestionRunError,
+    StagingContactCandidate,
+    StagingGuestCandidate,
+)
 from app.models.participation import Participation
 from app.models.user import User
 from app.models.video import Video
@@ -22,8 +28,12 @@ __all__ = [
     "Guest",
     "GuestCategory",
     "Host",
+    "IngestionRun",
+    "IngestionRunError",
     "Participation",
     "Program",
+    "StagingContactCandidate",
+    "StagingGuestCandidate",
     "Video",
     "VideoType",
     "guest_category_links",

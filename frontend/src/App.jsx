@@ -7,6 +7,7 @@ import Login from "./pages/Login.jsx";
 import GuestDetail from "./pages/guests/GuestDetail.jsx";
 import GuestForm from "./pages/guests/GuestForm.jsx";
 import GuestList from "./pages/guests/GuestList.jsx";
+import Staging from "./pages/staging/Staging.jsx";
 import VideoDetail from "./pages/videos/VideoDetail.jsx";
 import VideoForm from "./pages/videos/VideoForm.jsx";
 import VideoList from "./pages/videos/VideoList.jsx";
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="videos/new" element={<VideoForm />} />
         <Route path="videos/:id" element={<VideoDetail />} />
         <Route path="videos/:id/edit" element={<VideoForm />} />
+        <Route path="staging/:tab?" element={<Staging />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -8,6 +8,8 @@ export function createFakeBackend({
   contacts = [],
   videos = [],
   participations = [], // { id, guest_id, video_id, notes }
+  guestCandidates = [], // ver STAGING_GUEST_CANDIDATE_DEFAULTS
+  contactCandidates = [], // ver STAGING_CONTACT_CANDIDATE_DEFAULTS
   pageSize = 2,
   onRequest,
 } = {}) {
@@ -18,6 +20,8 @@ export function createFakeBackend({
     contacts: structuredClone(contacts),
     videos: structuredClone(videos),
     participations: structuredClone(participations),
+    guestCandidates: structuredClone(guestCandidates),
+    contactCandidates: structuredClone(contactCandidates),
     catalogs: {
       boroughs: [
         { id: 1, name: "Coyoacán", is_active: true },
@@ -85,6 +89,11 @@ export function createFakeBackend({
       part_of_video_id: payload.part_of_video_id ?? null,
     };
   }
+
+  const videoSummary = (v) => ({ id: v.id, youtube_video_id: v.youtube_video_id, title: v.title, source: v.source });
+
+  const guestCandidateOut = (c) => ({ ...c, video: videoSummary(db.videos.find((v) => v.id === c.video_id)) });
+  const contactCandidateOut = (c) => ({ ...c, video: videoSummary(db.videos.find((v) => v.id === c.video_id)) });
 
   const participationOut = (p) => {
     const guest = db.guests.find((g) => g.id === p.guest_id);
@@ -182,7 +191,11 @@ export function createFakeBackend({
     if (pathname === "/videos") {
       if (method === "GET") {
         const source = params.get("source");
-        return fakeResponse(200, pageOf(source ? db.videos.filter((v) => v.source === source) : db.videos, params));
+        const guestStatus = params.get("guest_status");
+        let list = db.videos;
+        if (source) list = list.filter((v) => v.source === source);
+        if (guestStatus) list = list.filter((v) => v.guest_status === guestStatus);
+        return fakeResponse(200, pageOf(list, params));
       }
       if (method === "POST") {
         if (db.videos.some((v) => v.youtube_video_id === body.youtube_video_id)) {
@@ -244,6 +257,103 @@ export function createFakeBackend({
         db.participations.splice(index, 1);
         return fakeResponse(204);
       }
+    }
+
+    // ---- Staging Review ----
+    if (pathname === "/staging/guest-candidates" && method === "GET") {
+      const status = params.get("status") || "pending";
+      const list = db.guestCandidates.filter((c) => c.status === status);
+      const page = pageOf(list, params);
+      return fakeResponse(200, { ...page, items: page.items.map(guestCandidateOut) });
+    }
+
+    if ((m = pathname.match(/^\/staging\/guest-candidates\/(\d+)$/)) && method === "GET") {
+      const candidate = db.guestCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${m[1]}` });
+      return fakeResponse(200, guestCandidateOut(candidate));
+    }
+
+    if ((m = pathname.match(/^\/staging\/guest-candidates\/(\d+)\/suggestions$/)) && method === "GET") {
+      const candidate = db.guestCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${m[1]}` });
+      const key = candidate.extracted_name.toLowerCase();
+      const matches = db.guests.filter(
+        (g) => g.full_name.toLowerCase() === key || g.full_name.toLowerCase().includes(key) || key.includes(g.full_name.toLowerCase())
+      );
+      return fakeResponse(200, matches.map((g) => ({ id: g.id, full_name: g.full_name })));
+    }
+
+    if ((m = pathname.match(/^\/staging\/guest-candidates\/(\d+)\/accept$/)) && method === "POST") {
+      const candidate = db.guestCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${m[1]}` });
+      if (candidate.status !== "pending") return fakeResponse(409, { detail: "El candidato ya fue revisado" });
+
+      let guest;
+      if (body.existing_guest_id) {
+        guest = db.guests.find((g) => g.id === body.existing_guest_id);
+        if (!guest) return fakeResponse(404, { detail: `No existe el invitado ${body.existing_guest_id}` });
+      } else {
+        guest = guestFromPayload(body, db.nextId++);
+        db.guests.push(guest);
+      }
+      if (!db.participations.some((p) => p.guest_id === guest.id && p.video_id === candidate.video_id)) {
+        db.participations.push({ id: db.nextId++, guest_id: guest.id, video_id: candidate.video_id, notes: null });
+      }
+      candidate.status = "accepted";
+      candidate.linked_guest_id = guest.id;
+      candidate.reviewed_at = new Date().toISOString();
+      return fakeResponse(200, guest);
+    }
+
+    if ((m = pathname.match(/^\/staging\/guest-candidates\/(\d+)\/reject$/)) && method === "POST") {
+      const candidate = db.guestCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${m[1]}` });
+      if (candidate.status !== "pending") return fakeResponse(409, { detail: "El candidato ya fue revisado" });
+      candidate.status = "rejected";
+      candidate.reviewed_at = new Date().toISOString();
+      return fakeResponse(200, guestCandidateOut(candidate));
+    }
+
+    if (pathname === "/staging/contact-candidates" && method === "GET") {
+      const status = params.get("status") || "pending";
+      const list = db.contactCandidates.filter((c) => c.status === status);
+      const page = pageOf(list, params);
+      return fakeResponse(200, { ...page, items: page.items.map(contactCandidateOut) });
+    }
+
+    if ((m = pathname.match(/^\/staging\/contact-candidates\/(\d+)$/)) && method === "GET") {
+      const candidate = db.contactCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de contacto ${m[1]}` });
+      return fakeResponse(200, contactCandidateOut(candidate));
+    }
+
+    if ((m = pathname.match(/^\/staging\/contact-candidates\/(\d+)\/accept$/)) && method === "POST") {
+      const candidate = db.contactCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de contacto ${m[1]}` });
+      if (candidate.status !== "pending") return fakeResponse(409, { detail: "El candidato ya fue revisado" });
+      const contact = {
+        id: db.nextId++,
+        guest_id: body.guest_id,
+        contact_type: catalogItem("contact-types", body.contact_type_id),
+        value: body.value,
+        note: body.note ?? null,
+        source: "video_description",
+        verified: false,
+      };
+      db.contacts.push(contact);
+      candidate.status = "accepted";
+      candidate.linked_contact_id = contact.id;
+      candidate.reviewed_at = new Date().toISOString();
+      return fakeResponse(200, contact);
+    }
+
+    if ((m = pathname.match(/^\/staging\/contact-candidates\/(\d+)\/reject$/)) && method === "POST") {
+      const candidate = db.contactCandidates.find((c) => c.id === Number(m[1]));
+      if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de contacto ${m[1]}` });
+      if (candidate.status !== "pending") return fakeResponse(409, { detail: "El candidato ya fue revisado" });
+      candidate.status = "rejected";
+      candidate.reviewed_at = new Date().toISOString();
+      return fakeResponse(200, contactCandidateOut(candidate));
     }
 
     return fakeResponse(404, { detail: `Ruta no simulada: ${method} ${pathname}` });

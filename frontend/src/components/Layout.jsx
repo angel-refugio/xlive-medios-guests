@@ -6,6 +6,7 @@ const LINKS = [
   { to: "/catalogs", label: "Catálogos" },
   { to: "/guests", label: "Invitados" },
   { to: "/videos", label: "Videos" },
+  { to: "/staging", label: "Staging Review" },
 ];
 
 export default function Layout() {

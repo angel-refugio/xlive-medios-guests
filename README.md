@@ -9,7 +9,12 @@ reglas de trabajo en `CLAUDE.md`.
 - Fase 2 (Autenticación y CRUD base): completada. La app permite iniciar sesión como
   administrador y administrar catálogos, invitados (con categorías y contactos), videos
   cargados a mano y participaciones (invitado ↔ video), todo desde la interfaz.
-- Fase 3 (pipeline de ingesta con IA + Staging Review): activa; plan propuesto en `docs/PHASE3_PLAN.md`, pendiente de aprobación.
+- Fase 3 (pipeline de ingesta con IA + Staging Review): completada (backend y frontend,
+  ver `docs/PHASE3_PLAN.md`). Trae videos del canal, propone invitados/contactos/"sin
+  invitados" con reglas de regex y un LLM local (Ollama), y la app permite aceptar, editar o
+  rechazar cada candidato antes de que se vuelva dato final. Sin disparador automático todavía
+  (FR-011, se dispara a demanda); aviso de privacidad (LFPDPPP) pendiente con el dueño del
+  canal antes de la carga histórica masiva de la Fase 7.
 
 ## Estructura
 ```
@@ -24,6 +29,9 @@ docker-compose.yml   PostgreSQL + pgAdmin
    Para la app: `JWT_SECRET` (cadena aleatoria de al menos 32 caracteres; se genera con
    `python -c "import secrets; print(secrets.token_urlsafe(48))"`), `ADMIN_USERNAME` y
    `ADMIN_PASSWORD`. El backend lee el `.env` de la raíz automáticamente.
+   Para correr la ingesta de la Fase 3 (opcional; el resto de la app funciona sin esto):
+   `YOUTUBE_API_KEY` y Ollama corriendo en local con el modelo de `OLLAMA_MODEL`
+   (`qwen2.5:3b` por defecto) ya descargado (`ollama pull qwen2.5:3b`).
 2. Base de datos (raíz del proyecto): `docker compose --env-file .env up -d`
 3. Backend (desde `backend/`):
    ```powershell
@@ -51,8 +59,14 @@ docker-compose.yml   PostgreSQL + pgAdmin
    y los tipos de video, programas y categorías que se necesiten. Las alcaldías de la CDMX ya vienen cargadas.
 3. **Invitados**: alta con solo el nombre; el resto se completa después. Las categorías nuevas se pueden
    crear al vuelo. Los contactos y las participaciones se agregan desde el detalle del invitado.
-4. **Videos**: por ahora se cargan a mano (quedan con origen «Manual»). Al llegar la ingesta real (Fase 3)
-   los de prueba se localizan con el filtro «Origen → Manuales» y se borran desde su detalle.
+4. **Videos**: se cargan a mano (quedan con origen «Manual») o los trae la ingesta de la Fase 3
+   (origen «YouTube»). Los videos de prueba manuales se localizan con el filtro «Origen → Manuales»
+   y se borran desde su detalle.
+5. **Staging Review** (Fase 3): en "Invitados candidatos" y "Contactos candidatos" se revisa lo que
+   propuso la ingesta — aceptar (crea o vincula, sugiriendo invitados parecidos para no duplicar),
+   editar antes de aceptar, o rechazar. En "Videos sin invitados" se reclasifican los que la IA
+   marcó así por error. La ingesta en sí (traer videos del canal y analizarlos) todavía se dispara
+   por código (`app.services.pipeline.run_batch`), sin un botón ni un disparador programado en la app.
 
 Reglas de la API que la interfaz respeta: los borrados exigen `?confirm=true` (la app pide confirmación
 antes), los listados grandes se paginan (50 por defecto, máximo 200) y los catálogos se desactivan en
@@ -63,6 +77,10 @@ lugar de borrarse.
   participaciones muestran los primeros 200 registros.
 - Fusionar categorías (FR-004) quedó sin hacer.
 - Sin exportación (Fase 5) ni seguimiento de re-contacto (Fase 6).
+- Ingesta sin disparador automático ni botón en la app todavía (FR-011): se corre por código; construir
+  quién la llama y cuándo se deja para una fase final.
+- Aviso de privacidad (LFPDPPP) pendiente con el dueño del canal antes de la carga histórica masiva
+  (Fase 7).
 
 ## Documentación
 - `docs/ARCHITECTURE.md`: arquitectura y decisiones.

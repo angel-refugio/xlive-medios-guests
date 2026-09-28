@@ -1,6 +1,95 @@
 # Plan — Fase 3: Pipeline de ingesta (ETL con IA) + Staging Review
 
-**Estado: propuesta, pendiente de aprobación** (nada implementado; las reglas de contenido del pipeline ya se acordaron con el usuario y están validadas con datos reales, ver "Reglas del pipeline" abajo). El usuario decidió detenerse al cerrar la Fase 2; cuando pida arrancar la Fase 3, primero se repasan con él las "Preguntas abiertas" de abajo y se ajusta este plan. Alcance según `PROJECT_BRIEF.md`
+**Estado: completada (2026-09-28)**, los 8 pasos hechos y probados (294 pruebas de backend,
+117 de frontend). Queda sin implementar, a propósito, el disparador de la ingesta (FR-011: un
+botón en la app o una tarea programada) — se dejó para una fase final, según lo acordado; hoy
+se corre por código (`app.services.pipeline.run_batch`). El aviso de privacidad (LFPDPPP) sigue
+pendiente con el Ing. Israel, sin bloquear nada hasta la carga histórica masiva de la Fase 7.
+Documentación general actualizada al cierre: `docs/ARCHITECTURE.md` (sección "Ingesta con IA"),
+`docs/DATA_MODEL.md` (tablas de staging) y `README.md`. Detalle paso a paso abajo.
+
+Preguntas abiertas repasadas con el usuario (2026-09-28): arranca a
+codificar sin esperar el aviso de privacidad, que no bloquea el código (solo la carga masiva de
+la fase 7). **Paso 1 (configuración y contrato de datos) hecho**: `get_ollama_base_url` y
+`get_ollama_model` en `backend/app/core/config.py`; contrato del LLM en
+`backend/app/schemas/ingestion.py` (`VideoAnalysis`, `GuestCandidate`, `ContactCandidate`), con
+pruebas en `backend/tests/test_config.py` y `backend/tests/test_ingestion_schema.py`.
+**Paso 2 (modelo de staging) hecho**: migración `0006` con `ingestion_runs` (historial de
+corridas), `ingestion_run_errors` (errores por video, no detienen el lote),
+`staging_guest_candidates` y `staging_contact_candidates` (candidatos con confianza
+cruda/ajustada, estado pendiente/aceptado/rechazado y vínculo al registro final una vez
+aceptados) en `backend/app/models/ingestion.py`; además `videos.possible_duplicate_of_video_id`
+para la regla de casi duplicados. Pruebas en `backend/tests/test_ingestion_models.py`.
+**Paso 3 (servicio YouTube → BD) hecho**: `backend/app/services/ingestion.py`
+(`upsert_video`/`sync_videos`/`sync_channel`), idempotente por `youtube_video_id` y aplicando
+la regla de "el real gana sobre el manual" ya acordada. Se completó `youtube_client.py` con los
+metadatos que ya estaban modelados en `Video` pero sin usarse (`channel_id`, `channel_title`,
+`thumbnail_url`, `duration_seconds` vía `parse_duration`). Pruebas en `backend/tests/test_ingestion.py`
+y ampliadas en `backend/tests/test_sample_videos.py`.
+**Paso 4 (reglas de regex previas al LLM) hecho**: `backend/app/services/regex_rules.py` con
+`extract_contacts` (URLs, `ETIQUETA:` + usuario, correos, deduplicados), `extract_name_candidates`
+(los 3 patrones de formato de "Reglas del pipeline": después de dos puntos, `con Nombre`,
+MAYÚSCULAS entre paréntesis — confianza baja/media, la asigna el paso 6) e
+`is_no_guests_candidate` (regla conservadora de 4 condiciones; distingue "nombre propio fuerte"
+—los marcadores de alta señal `Invitado:`/`presenta a`/`nombre real:`/`es el seudónimo de`— de
+los patrones de formato más amplios, usados solo en las condiciones 3 y 4). Pruebas en
+`backend/tests/test_regex_rules.py`, incluidos los ejemplos textuales citados en este documento.
+**Paso 5 (servicio Ollama) hecho**: `backend/app/services/ollama_client.py` —
+`analyze_video()` arma el prompt (título + descripción + catálogos existentes de categoría,
+tipo de video, alcaldía, conductor y programa, para que el modelo solo señale coincidencias
+reales y nunca invente), pide salida conforme al esquema de `VideoAnalysis` (paso 1) vía
+`format` de Ollama, valida con Pydantic y reintenta (por defecto 3 veces) si el JSON es
+inválido o no cumple el contrato; error claro (`OllamaError`) si se agotan los intentos.
+Pruebas con transporte HTTP simulado en `backend/tests/test_ollama_client.py` (sin red ni
+Ollama real). **Paso 6 (orquestador idempotente) hecho**: `backend/app/services/pipeline.py` —
+`process_video()` hace regex (paso 4) → LLM (paso 5) → filas en `staging_guest_candidates`/
+`staging_contact_candidates` (paso 2) para un video, marca `guest_status='no_guests'` cuando la
+regla de regex lo detecta automáticamente (CLAUDE.md: "reclasificable por un humano"), calcula
+`possible_duplicate_of_video_id` (título+descripción normalizados iguales y `published_at` a
+±14 días, según la evidencia real ya documentada) y es idempotente vía `Video.last_ingested_at`
+(migración `0007`). `run_batch()` aplica esto a un lote de videos nuevos del canal usando el
+sync del paso 3, sin detener el lote si un video falla (`IngestionRunError`) y llevando el
+historial en `IngestionRun`. Dejé documentados en el código, como decisiones mías a validar con
+resultados reales, los valores concretos de ajuste de confianza (+0.15 título+descripción,
++0.10 solo título, -0.20 posible grupo) y la confianza inicial de los patrones de regex (0.30-
+0.40 para nombres por formato, 0.7 para contactos por regex) — el plan solo daba las reglas
+cualitativas. Pruebas en `backend/tests/test_pipeline.py`. Con esto termina la lógica de
+ingesta. **Paso 7 backend (Staging Review) hecho**: `backend/app/services/staging.py` +
+`backend/app/schemas/staging.py` + `backend/app/api/staging.py` (rutas `/staging/*`,
+protegidas). Cola principal = `GET /staging/guest-candidates` y `/contact-candidates`
+(`?status=pending` por defecto), ordenada por confianza **ajustada**, no la cruda (regla del
+pipeline). Aceptar invitado (`POST .../accept`): crea uno nuevo o vincula uno existente
+(`existing_guest_id`) editando solo lo enviado, crea su `Participation` (sin duplicar si ya
+existía), y sugiere existentes por nombre parecido en `GET .../suggestions` (FR-001,
+reutilizando `normalize_name`, comparando en Python como `catalogs._ensure_unique` — la tabla
+de invitados no justifica todavía una búsqueda por similitud en SQL). Aceptar contacto exige
+`guest_id` explícito del revisor (nunca se infiere solo de `guest_candidate_id`); crea el
+`Contact` con `source='video_description'` y `verified=False`. Rechazar cierra el candidato sin
+crear nada. La "vista aparte" de videos "sin invitados" reutiliza el `GET /videos` de la fase 2
+con un filtro `guest_status` nuevo (`?guest_status=no_guests`); reclasificar también reutiliza
+el `PATCH /videos/{id}` ya existente (ya aceptaba `guest_status`) — no hizo falta ninguna ruta
+nueva para eso. Pruebas en `backend/tests/test_staging.py` (servicio) y
+`backend/tests/test_staging_api.py` (endpoints). Sin migración nueva (las tablas ya existían
+desde el paso 2). **Paso 7 frontend hecho**: `frontend/src/pages/staging/` — `Staging.jsx` (pestañas, como
+`Catalogs.jsx`), `GuestCandidateQueue.jsx`, `ContactCandidateQueue.jsx` y `NoGuestsVideos.jsx`,
+en `/staging/guest-candidates`, `/staging/contact-candidates` y `/staging/no-guests` (enlace
+"Staging Review" en la navegación). Cola de invitados: por cada candidato pendiente, "Revisar"
+despliega las sugerencias de invitados parecidos (FR-001, un botón "Vincular con este" por
+sugerencia) y un formulario para crear uno nuevo (nombre, organización, rol, edad, alcaldía,
+categorías existentes/nuevas, notas) o rechazar. Cola de contactos: el revisor elige
+explícitamente a qué invitado se atribuye (select) y el tipo de contacto, con el valor
+precargado y editable. Videos "sin invitados": botón "Sí tiene invitados" que regresa el video
+a `pending` y navega a su detalle para agregar la participación con los controles ya existentes
+de la fase 2. Extendí `frontend/src/test/fakeBackend.js` con las rutas `/staging/*` y el filtro
+`guest_status` de `/videos`. Pruebas en `frontend/src/pages/staging/Staging.test.jsx`. Encontré
+y corregí 3 bugs propios durante la revisión antes de pedir que se corrieran las pruebas (ver
+mensaje al usuario): un `data?.items.map` que no protegía bien contra respuesta nula, un
+`aria-label` puesto en un `<div>` en vez del `<form>`, y una consulta de texto ambigua en mi
+propia prueba. Con esto termina el paso 7.
+**Paso 8 (cierre) hecho**: documentación general actualizada (`ARCHITECTURE.md`,
+`DATA_MODEL.md`, `README.md`, este plan); 294 pruebas de backend y 117 de frontend pasando.
+Commits propuestos al usuario, pendientes de su decisión (nunca se hace `git push`). Alcance
+según `PROJECT_BRIEF.md`
 (sección 7, FR-007, FR-009, FR-011, FR-013, FR-014 y "Pipeline ligero de IA"). Estado de partida:
 Fase 2 completada (auth, catálogos, invitados, contactos, videos manuales con `source`, participaciones).
 

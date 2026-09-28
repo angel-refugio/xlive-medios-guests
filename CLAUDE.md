@@ -17,7 +17,7 @@ Organización: categoría, tipo de talento, edad, alcaldía, programa y temporad
 - Cambios incrementales y verificables. Sin arquitectura multiagente.
 - Los campos son opcionales: un video puede no tener invitados (la IA lo marca "sin invitados", reclasificable por un humano) y un invitado puede tener contactos parciales, editables después.
 - Categoría del invitado (talento) = catálogo configurable N↔N, opcional, creable desde la app; alcaldías = catálogo de CDMX editable; tipo de video (entrevista/evento/podcast…) es catálogo configurable. No hay temporadas; programa y "parte de otro video" son opcionales. Edad aproximada (búsqueda por rangos); alcaldía del invitado y del evento.
-- Todos los videos van bajo el nombre "X Live Medios": nunca mencionar el nombre anterior del canal en el sistema, UI ni datos.
+- Todos los videos van bajo el nombre "X Live Medios": nunca mencionar el nombre anterior del canal en el sistema, UI ni datos. Esto no aplica a "Expandete TV": es el nombre de un programa/segmento del catálogo `Program` como cualquier otro (igual que "V2H TV" o "Inzzania TV"), confirmado por el usuario; sus videos se analizan igual que el resto y se asocian a ese programa por catálogo, sin bloqueo ni excepción.
 - Todo (consultar, revisar, editar) se hace desde la app, sin SQL, según permisos.
 - Todo dato extraído por IA es candidato hasta validación humana.
 - Trabajar siempre en la fase activa del roadmap; no adelantar fases sin acuerdo.

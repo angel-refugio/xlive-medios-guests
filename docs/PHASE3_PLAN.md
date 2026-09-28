@@ -54,14 +54,57 @@ Propuesta acordada con el usuario para lo que hacen el paso 4 (reglas previas) y
 - **Confianza**: se guarda la cruda del LLM más un ajuste por señales objetivas (título+
   descripción = a favor, solo descripción = neutro, ambigüedad persona/banda = en contra);
   Staging Review ordena por el ajuste, no por la confianza cruda (el modelo de 3B calibra mal).
-- **Casi duplicados**: si título normalizado + descripción coinciden fuerte contra otro video,
-  se marca "posible duplicado de `youtube_video_id X`" en staging — nunca se fusiona ni
-  descarta solo.
+- **Casi duplicados**: si título normalizado + descripción coinciden fuerte contra otro video
+  **y además `published_at` está cerca** (ver evidencia abajo — condición obligatoria, no
+  opcional), se marca "posible duplicado de `youtube_video_id X`" en staging — nunca se
+  fusiona ni descarta solo.
 
 **"Expandete TV" es un programa del catálogo, no el nombre prohibido del canal** (aclarado en
 `CLAUDE.md`): sus videos se analizan igual que cualquier otro y se asocian al programa
 "Expandete TV" por el mismo matching de catálogo — sin regla especial. Señal validada en dos
 muestras independientes (~23-25% de los videos revisados).
+
+**Patrones regex adicionales (candidatos de nombre por formato, confianza baja/media):**
+Se suman a las reglas de alta señal de arriba, para cubrir nombres sin palabra clave
+explícita. Encontrados al comparar contra spaCy NER (ver "Métodos evaluados" abajo):
+- Después de dos puntos, un nombre en Título Caso de hasta 4 palabras — ej. `Deportes y
+  Politica: Patricia Muñiz, Luis Rodolfo Najera`.
+- `con [Nombre Apellido]` en Título Caso — ej. `Revista Penthouse Television con Karimm Kury`.
+- Texto en MAYÚSCULAS dentro de paréntesis — ej. `MC LUKA Presenta: El Mechero Del Abuelo
+  (NEDMAN GUERRERO)`.
+Estos tres, a diferencia de los de alta señal, también pueden matchear nombres de programa o
+frases genéricas, así que entran como candidato de confianza más baja, nunca como "sin
+invitados" automático por su sola ausencia.
+
+**Métodos evaluados y descartados para esta etapa:**
+- **spaCy NER (`es_core_news_md`)**, probado contra los 150 videos reales de la muestra: falla
+  justo en el tipo de nombre que más importa aquí — apodos/nombres artísticos en mayúsculas
+  (`MC INDIGENTE`, `LESLY ZOMBIE`, `DANTE`, `BENCK`, `ACHEPE` los etiquetó como MISC/LOC o no
+  los detectó), porque el modelo está entrenado con texto de noticias formales, no con el
+  estilo informal de estas descripciones. Además, en descripciones biográficas largas generó
+  mucho ruido (19 entidades "persona" distintas en una sola descripción, mezclando al invitado
+  real con otros artistas solo mencionados de paso). Los pocos aciertos que spaCy sí encontró y
+  el regex original no (`Karimm Kury`, `Patricia Muñiz`, `NEDMAN GUERRERO`) quedaron cubiertos
+  por los 3 patrones nuevos de arriba, sin necesidad de sumar la librería ni el modelo.
+- **NER "zero-shot" tipo GLiNER** (etiquetas custom como "nombre artístico de invitado" en vez
+  de la categoría fija PER/ORG): en teoría más flexible que spaCy, pero sigue siendo un modelo
+  general no afinado con el estilo de este canal — mismo riesgo de fallar con apodos y jerga.
+  No se probó (dependencia nueva sin evidencia de que resuelva el problema real de spaCy);
+  se dejaría solo para reconsiderar si en la práctica el regex + LLM se quedan cortos.
+- **Embeddings (`nomic-embed-text`, vía Ollama local) para detectar casi duplicados**: probado
+  contra los 150 videos. Los 2 duplicados reales confirmados sí dan similitud altísima
+  (0.9989 y 1.0000), pero también encontró un **falso positivo real**: el programa recurrente
+  "Revista Penthouse Television con Karimm Kury" tiene 8 episodios en la muestra, 7 de ellos
+  con la descripción idéntica carácter por carácter (`#RevistaPenthouseTelevision |
+  #KarimmKury | #XLiveMedios`, sin texto propio del episodio) pero publicados entre febrero y
+  diciembre de 2024 — episodios reales y distintos, no reposts. Con similitud de texto (literal
+  o semántica, da igual) salen indistinguibles de un duplicado real (similitud 1.0000). Mismo
+  patrón en "INZZANIA T.V." (similitud 0.9777, ~2 meses de diferencia) y "V2H TV" (0.8356, ~6
+  meses). La señal que sí distingue un caso del otro es **la fecha, no el texto**: los
+  duplicados reales están a minutos/una semana de diferencia; los episodios distintos, a
+  meses. Por eso la regla de "casi duplicados" de arriba exige `published_at` cercano además
+  de la similitud de texto — el embedding no resuelve nada que el texto literal no tuviera ya,
+  así que no se suma como dependencia nueva.
 
 ## Antes de empezar la Fase 3: recorrido completo de la app (lo hace el usuario)
 Con el backend, el frontend y Docker corriendo, y datos reales, recorrer la app en el navegador:

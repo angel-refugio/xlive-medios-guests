@@ -14,7 +14,7 @@ Fuera de esta fase: buscador y filtros (4), exportación (5), re-contacto (6), c
 
 ## Pasos propuestos (cada uno con pruebas y commit propuesto)
 1. **Configuración y contrato de datos**: variables `YOUTUBE_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (ya están en `.env.example`); definir el JSON de salida del LLM (invitados, categorías sugeridas, contactos, confianza, "sin invitados").
-2. **Modelo de staging** (migración `0006`; la `0005` ya la usan los conductores): tablas de candidatos de invitado y de contacto (video, valores propuestos, confianza, estado pendiente/aceptado/rechazado, vínculo al registro final una vez aceptado) y, si se aprueba, registro de corridas de ingesta. Se diseñan aquí, no antes (ver `ARCHITECTURE.md`).
+2. **Modelo de staging** (migración `0006`; la `0005` ya la usan los conductores): tablas de candidatos de invitado y de contacto (video, valores propuestos, confianza, estado pendiente/aceptado/rechazado, vínculo al registro final una vez aceptado) y registro de corridas de ingesta (fecha, videos, errores). Se diseñan aquí, no antes (ver `ARCHITECTURE.md`).
 3. **Servicio YouTube**: listar los videos del canal con paginación, manejo de errores y cuota; guardarlos en `videos` sin duplicar (`youtube_video_id`). Las pruebas usan respuestas simuladas, sin red.
 4. **Reglas previas al LLM**: extraer enlaces y correos con expresiones regulares; detectar videos "sin invitados" (FR-014) con reglas simples (detalle en "Reglas del pipeline" abajo).
 5. **Servicio Ollama**: prompt con título y descripción, salida estructurada validada con Pydantic, tiempo límite, reintentos y manejo de JSON inválido; un video a la vez. Pruebas con el cliente simulado.
@@ -119,14 +119,14 @@ Cualquier fallo se corrige antes de construir la Fase 3 encima. Opcional: ver lo
 (✔ = resuelta)
 
 - ✔ **Clave de YouTube API** (paso 3): puesta en `.env` por el usuario.
-- **Modelo de Ollama** (paso 5): ¿cuál (~3B) y está instalado en el equipo? `OLLAMA_MODEL` sigue vacío.
+- ✔ **Modelo de Ollama** (paso 5): `qwen2.5:3b`, ya instalado en el equipo. `OLLAMA_MODEL` fijado en `.env`/`.env.example`. Se prefirió sobre `llama3.2:3b` (mismo tamaño, sin ventaja clara aquí) y sobre `qwen2.5:7b` (mejor calidad esperada, pero ~2.5x más pesado en CPU sin GPU — se deja como opción de respaldo si `qwen2.5:3b` se queda corto en la validación con ejemplos reales).
 - ✔ **Qué propone la IA**: invitados, categorías (del catálogo o "categoría nueva sugerida"), contactos, tipo de video, alcaldía del evento, conductor y programa — ver "Reglas del pipeline" arriba. El programa y el conductor solo se proponen contra catálogo existente, nunca inventados; el programa sigue sin inferirse sin evidencia (FR-005).
-- **Videos manuales de prueba**: si la ingesta trae un `youtube_video_id` que ya existe como manual, ¿se actualiza ese registro (y pasa a `youtube`) o se deja intacto y se avisa? (sigue abierta)
+- ✔ **Videos manuales de prueba**: si la ingesta trae un `youtube_video_id` que ya existe como manual, se ignora el registro manual y **gana total prioridad el real**: el video pasa a `source='youtube'` y se actualizan sus metadatos (invitados/contactos/participaciones ya capturados a mano se conservan, solo se actualiza el video en sí). Aparte: los videos manuales de prueba creados en el recorrido previo a la Fase 3 no tienen ningún valor real y no deben verse en la app — se recomienda borrarlos desde la app (acción manual del usuario, no de código), no dejarlos "ignorados" con un flag nuevo.
 - ✔ **Reglas de "sin invitados"** (paso 4): ver "Reglas del pipeline" arriba — regla conservadora con 4 condiciones simultáneas.
 - ✔ **Tamaño de lote** para pruebas: 30 por corrida; ya usado en 5 corridas = 150 videos reales muestreados en dos rondas independientes (90 + 60).
-- **Ingesta programada** (FR-011): ¿se incluye en esta fase o solo el disparo manual? La frecuencia sigue abierta (brief, sección 8). (sigue abierta)
-- **Registro de corridas** (paso 2): ¿se guarda historial de corridas de ingesta (fecha, videos, errores) o basta con el estado por video? (sigue abierta)
-- **Aviso de privacidad (LFPDPPP)**: sigue abierto con el supervisor; conviene resolverlo antes de la carga masiva.
+- ✔ **Ingesta programada** (FR-011): semanal + disparador manual, pero **desactivada en esta fase** (se sigue trabajando con lotes manuales mientras el sistema no está terminado); construir el disparador programado se deja para una fase final.
+- ✔ **Registro de corridas** (paso 2): sí, se guarda historial de corridas (fecha, videos, errores), no solo el estado por video.
+- **Aviso de privacidad (LFPDPPP)**: se deja para después, pendiente de platicarlo con el Ing. Israel (dueño del canal y quien solicitó este sistema); conviene resolverlo antes de la carga masiva (Fase 7). Contexto ya aportado por el usuario: solo el Ing. Israel tendría acceso a estos datos (que de por sí ya posee), y los datos de redes sociales que se extraen son los que el propio invitado ya publicó públicamente en YouTube.
 
 Nuevas decisiones de contenido surgidas al validar con datos reales, ya incorporadas arriba:
 cómo combinar la confianza cruda del LLM con señales objetivas (título+descripción, ambigüedad

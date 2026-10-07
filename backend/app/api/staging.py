@@ -9,8 +9,11 @@ from app.schemas.guests import GuestOut
 from app.schemas.staging import (
     CandidateStatus, ContactCandidateAccept, ContactCandidateOut, ContactCandidatePage,
     GuestCandidateAccept, GuestCandidateOut, GuestCandidatePage, GuestSuggestion,
+    ReviewCounts, ReviewFilter, ReviewResolve, ReviewResolveOut, ReviewVideoPage,
 )
 from app.services import staging as service
+from app.services import staging_review as review_service
+from app.services.videos import VideoNotFoundError
 from app.services.contacts import ContactNotFoundError
 from app.services.guests import GuestNotFoundError, InvalidReferenceError
 from app.services.participations import ParticipationDuplicateError
@@ -20,11 +23,15 @@ router = APIRouter(prefix="/staging", tags=["staging"], dependencies=[Depends(re
 _KNOWN_ERRORS = (
     GuestNotFoundError, ContactNotFoundError, service.StagingCandidateNotFoundError,
     service.StagingCandidateAlreadyReviewedError, InvalidReferenceError, ParticipationDuplicateError,
+    VideoNotFoundError, review_service.ReviewInputError,
 )
 
 
 def _http_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, (GuestNotFoundError, ContactNotFoundError, service.StagingCandidateNotFoundError)):
+    if isinstance(exc, (
+        GuestNotFoundError, ContactNotFoundError, service.StagingCandidateNotFoundError,
+        VideoNotFoundError,
+    )):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, service.StagingCandidateAlreadyReviewedError):
         return HTTPException(status_code=409, detail=str(exc))
@@ -113,5 +120,34 @@ def accept_contact_candidate(
 def reject_contact_candidate(candidate_id: int, db: Session = Depends(get_db)):
     try:
         return service.reject_contact_candidate(db, candidate_id)
+    except _KNOWN_ERRORS as exc:
+        raise _http_error(exc)
+
+
+# --- Revisión por video ---------------------------------------------------------
+
+@router.get("/review/counts", response_model=ReviewCounts)
+def review_counts(q: str | None = None, db: Session = Depends(get_db)):
+    """Contadores de la barra de filtros (videos por filtro, respetando la búsqueda)."""
+    return review_service.review_counts(db, q)
+
+
+@router.get("/review/videos", response_model=ReviewVideoPage)
+def list_review_videos(
+    filter: ReviewFilter = "pending",
+    q: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(review_service.DEFAULT_PAGE_SIZE, ge=1, le=review_service.MAX_PAGE_SIZE),
+    db: Session = Depends(get_db),
+):
+    items, total = review_service.list_review_videos(db, filter, q, page, page_size)
+    return ReviewVideoPage(items=items, total=total, page=page, page_size=page_size)
+
+
+@router.post("/review/videos/{video_id}/resolve", response_model=ReviewResolveOut)
+def resolve_review_video(video_id: int, data: ReviewResolve, db: Session = Depends(get_db)):
+    """Aplica de una vez lo que decidió el humano sobre un video (botón "Correcto")."""
+    try:
+        return review_service.resolve_video(db, video_id, data)
     except _KNOWN_ERRORS as exc:
         raise _http_error(exc)

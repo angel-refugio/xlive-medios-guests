@@ -92,12 +92,13 @@ def _usage_dict(usage: Usage) -> dict:
         "input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
         "cache_creation_tokens": usage.cache_creation_tokens,
         "cache_read_tokens": usage.cache_read_tokens,
-        "reported_cost_usd": usage.reported_cost_usd, "calls": usage.calls,
+        "reported_cost_usd": usage.reported_cost_usd, "calls": usage.calls, "models": usage.models,
     }
 
 
 def _usage_from_dict(data: dict) -> Usage:
-    return Usage(**{k: data.get(k, 0) for k in _usage_dict(Usage())})
+    numbers = {k: data.get(k, 0) for k in _usage_dict(Usage()) if k != "models"}
+    return Usage(**numbers, models=list(data.get("models") or []))
 
 
 def batch_path(out_dir: Path, index: int, batch: list[str]) -> Path:
@@ -191,6 +192,7 @@ def print_summary(args: argparse.Namespace, total: Usage, videos_done: int, cont
     overhead_path = args.out_dir / "overhead.json"
     overhead = _usage_from_dict(json.loads(overhead_path.read_text(encoding="utf-8"))) if overhead_path.exists() else None
     print(f"Videos con resultado: {videos_done} | llamadas: {total.calls}")
+    print(f"Modelo(s) que respondieron: {', '.join(total.models) or 'no registrado (lotes anteriores)'}")
     print(
         f"Tokens: entrada {total.total_input_tokens:,} (nuevos {total.input_tokens:,}, "
         f"caché {total.cache_creation_tokens + total.cache_read_tokens:,}), salida {total.output_tokens:,}"

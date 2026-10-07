@@ -9,7 +9,7 @@ Todo resultado es candidato hasta la revisión humana.
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -153,6 +153,8 @@ class Usage:
     cache_read_tokens: int = 0
     reported_cost_usd: float = 0.0
     calls: int = 0
+    # Modelos que respondieron (`modelUsage` de la respuesta), p. ej. ["claude-sonnet-5-5"].
+    models: list[str] = field(default_factory=list)
 
     def add(self, other: "Usage") -> None:
         self.input_tokens += other.input_tokens
@@ -161,6 +163,7 @@ class Usage:
         self.cache_read_tokens += other.cache_read_tokens
         self.reported_cost_usd += other.reported_cost_usd
         self.calls += other.calls
+        self.models = sorted({*self.models, *other.models})
 
     @property
     def total_input_tokens(self) -> int:
@@ -195,5 +198,6 @@ def parse_cli_envelope(stdout: str) -> tuple[str, Usage]:
         cache_read_tokens=int(raw.get("cache_read_input_tokens") or 0),
         reported_cost_usd=float(envelope.get("total_cost_usd") or 0.0),
         calls=1,
+        models=sorted(envelope.get("modelUsage") or {}),
     )
     return result, usage

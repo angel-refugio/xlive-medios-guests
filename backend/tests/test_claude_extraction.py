@@ -136,6 +136,7 @@ def test_to_eval_entry_da_nombres_y_programa_vacio_si_no_hay():
 def _envelope(**overrides) -> str:
     base = {
         "result": "{}", "is_error": False, "total_cost_usd": 0.5,
+        "modelUsage": {"claude-sonnet-5-5": {"inputTokens": 10}},
         "usage": {
             "input_tokens": 10, "output_tokens": 20,
             "cache_creation_input_tokens": 30, "cache_read_input_tokens": 40,
@@ -149,11 +150,12 @@ def test_parse_cli_envelope_lee_texto_y_tokens():
     assert text == "{}"
     assert (usage.input_tokens, usage.output_tokens, usage.total_input_tokens, usage.calls) == (10, 20, 80, 1)
     assert usage.reported_cost_usd == 0.5
+    assert usage.models == ["claude-sonnet-5-5"]
 
 
 def test_parse_cli_envelope_sin_usage_cuenta_cero():
     _, usage = ce.parse_cli_envelope(json.dumps({"result": "x"}))
-    assert usage.total_input_tokens == 0 and usage.output_tokens == 0
+    assert usage.total_input_tokens == 0 and usage.output_tokens == 0 and usage.models == []
 
 
 def test_parse_cli_envelope_error_de_claude():
@@ -174,6 +176,12 @@ def test_usage_suma_y_estima_costo_con_todos_los_tokens_de_entrada():
     assert total.calls == 2 and total.total_input_tokens == 1_000_000
     # 1 M de entrada a 3 USD + 1 M de salida a 15 USD
     assert total.estimated_api_cost_usd(3, 15) == pytest.approx(18.0)
+
+
+def test_usage_add_junta_los_modelos_sin_repetir():
+    total = Usage(models=["claude-sonnet-5-5"])
+    total.add(Usage(models=["claude-haiku-4-5", "claude-sonnet-5-5"]))
+    assert total.models == ["claude-haiku-4-5", "claude-sonnet-5-5"]
 
 
 def test_batch_extraction_requiere_version_y_videos():

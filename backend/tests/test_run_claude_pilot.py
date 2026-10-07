@@ -51,6 +51,7 @@ class FakeClaude:
         ]})
         stdout = json.dumps({
             "result": result, "total_cost_usd": 0.1,
+            "modelUsage": {"claude-sonnet-5-5": {}},
             "usage": {"input_tokens": 100, "output_tokens": 50},
         })
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
@@ -71,8 +72,22 @@ def test_run_guarda_lotes_y_predicciones_para_la_evaluacion(tmp_path, capsys):
     assert cache["a1"] == {"guests": ["Invitado a1"], "hosts": [], "program": ""}
     out = capsys.readouterr().out
     assert "Videos con resultado: 3" in out and "sin asignar: 3" in out
+    assert "Modelo(s) que respondieron: claude-sonnet-5-5" in out
+    saved = json.loads(next((tmp_path / "pilot").glob("batch_*.json")).read_text(encoding="utf-8"))
+    assert saved["usage"]["models"] == ["claude-sonnet-5-5"]
     assert "Costo equivalente en API" in out
     assert "5512345678" not in out                            # los contactos no se imprimen
+
+
+def test_lotes_antiguos_sin_modelo_se_resumen_como_no_registrado(tmp_path, capsys):
+    pilot.run(_args(tmp_path), FakeClaude())
+    for path in (tmp_path / "pilot").glob("batch_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        del data["usage"]["models"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+    capsys.readouterr()
+    assert pilot.run(_args(tmp_path, "--summary-only"), FakeClaude()) == 0
+    assert "no registrado" in capsys.readouterr().out
 
 
 def test_run_no_repite_lotes_ya_guardados(tmp_path):

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.services.claude_extraction import INSTRUCTIONS_VERSION as DEFAULT
 from app.services.claude_extraction import ClaudeExtractionError
 from scripts import run_claude_pilot as pilot
 
@@ -78,7 +79,7 @@ def test_run_guarda_lotes_y_predicciones_para_la_evaluacion(tmp_path, capsys):
     assert pilot.run(args, runner) == 0
     assert runner.calls == 2                                  # lote de la serie A + lote de sueltos
     assert len(list((tmp_path / "pilot").glob("batch_*.json"))) == 2
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", DEFAULT).read_text(encoding="utf-8"))
     assert cache["a1"] == {"guests": ["Invitado a1"], "hosts": [], "program": ""}
     out = capsys.readouterr().out
     assert "Videos con resultado: 3" in out and "sin asignar: 3" in out
@@ -122,7 +123,7 @@ def test_run_limit_usa_solo_los_primeros_videos(tmp_path):
     args = _args(tmp_path, "--limit", "2")
     runner = FakeClaude()
     pilot.run(args, runner)
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", DEFAULT).read_text(encoding="utf-8"))
     assert set(cache) == {"a1", "a2"}
 
 
@@ -131,7 +132,7 @@ def test_lote_con_el_mismo_numero_pero_otros_videos_no_se_salta(tmp_path, capsys
     pilot.run(_args(tmp_path, "--limit", "1"), FakeClaude())
     runner = FakeClaude()
     assert pilot.run(_args(tmp_path), runner) == 0
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", DEFAULT).read_text(encoding="utf-8"))
     assert set(cache) == {"a1", "a2", "s1"}
     assert runner.calls == 2                                  # [a1, a2] y [s1]; el lote [a1] no cuenta
     assert "sin resultado" not in capsys.readouterr().out
@@ -170,7 +171,7 @@ def test_with_catalog_pasa_programas_y_conductores_de_la_referencia(tmp_path):
     payload = json.loads(runner.prompts[0][runner.prompts[0].index("{"):])
     assert payload["known_programs"] == ["Serie A"] and payload["known_hosts"] == ["Luis Pérez"]
     saved = json.loads(next((tmp_path / "pilot").glob("batch_*.json")).read_text(encoding="utf-8"))
-    assert saved["with_catalog"] is True and saved["instructions_version"] == "v2"
+    assert saved["with_catalog"] is True and saved["instructions_version"] == DEFAULT
 
 
 def test_sin_with_catalog_no_se_envian_catalogos(tmp_path):
@@ -199,7 +200,7 @@ def test_json_invalido_en_los_dos_intentos_deja_el_lote_pendiente(tmp_path, caps
 def test_nombres_de_cache_y_carpeta_por_version(tmp_path):
     assert pilot.eval_cache_path(tmp_path, "sonnet", "v1").name == "predictions_claude_code_sonnet.json"
     assert pilot.eval_cache_path(tmp_path, "sonnet", "v2").name == "predictions_claude_code_v2_sonnet.json"
-    assert pilot.default_out_dir("v1").name == "pilot" and pilot.default_out_dir("v2").name == "pilot_v2"
+    assert pilot.default_out_dir("v1").name == "pilot" and pilot.default_out_dir("v3").name == "pilot_v3"
 
 
 def test_instructions_v1_usa_las_instrucciones_y_el_nombre_de_v1(tmp_path, capsys):

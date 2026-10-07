@@ -19,9 +19,10 @@ from app.services import series_profile
 
 logger = logging.getLogger(__name__)
 
-# v1 = piloto sin catálogos (2026-10-07); v2 = con programas y conductores validados como contexto.
-INSTRUCTIONS_VERSIONS = ("v1", "v2")
-INSTRUCTIONS_VERSION = "v2"
+# v1 = piloto sin catálogos (2026-10-07); v2 = con programas y conductores validados como contexto;
+# v3 = v2 sin el ejemplo que contradecía la regla de "lo de después de los dos puntos es invitado".
+INSTRUCTIONS_VERSIONS = ("v1", "v2", "v3")
+INSTRUCTIONS_VERSION = "v3"
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 INSTRUCTIONS_PATH = PROMPTS_DIR / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"
 DEFAULT_BATCH_SIZE = 15

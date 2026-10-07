@@ -33,6 +33,13 @@ def test_load_instructions_trae_la_version_y_las_reglas_de_contactos():
     assert "varios invitados posibles" in text and "tipo no registrado" in text
 
 
+def test_load_instructions_v3_no_contradice_la_regla_de_los_dos_puntos():
+    v2, v3 = ce.load_instructions(version="v2"), ce.load_instructions(version="v3")
+    assert "Viaje a Marte" in v2 and "Viaje a Marte" not in v3     # el ejemplo que contradecía la regla
+    assert "aunque parezca una banda o un tema" in v3
+    assert "known_hosts" in v3 and '"instructions_version": "v3"' in v3 and "versión v3" in v3
+
+
 def test_load_instructions_v1_y_v2_existen_y_v2_trae_los_catalogos():
     v1, v2 = ce.load_instructions(version="v1"), ce.load_instructions(version="v2")
     assert "known_programs" not in v1 and "known_programs" in v2 and "known_hosts" in v2

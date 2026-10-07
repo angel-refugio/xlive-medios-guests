@@ -139,6 +139,7 @@ def load_sample_videos(samples_dir: Path) -> dict[str, dict]:
             for video in data["videos"]:
                 videos.setdefault(video["id"], {
                     "title": video["title"], "description": video.get("description") or "",
+                    "published_at": video.get("published_at"),
                 })
         except (OSError, ValueError, KeyError, TypeError) as exc:
             msg = f"[app.services.extraction_eval.load_sample_videos] No se pudo leer {path.name}: {exc}"

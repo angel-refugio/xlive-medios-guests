@@ -15,6 +15,7 @@ Ejecutar desde backend/ (venv activo, Ollama corriendo):
     python -m scripts.eval_extraction --extractor profile   # etapa 1 sin LLM (instantáneo)
     python -m scripts.eval_extraction --extractor profile_llm --limit 10   # etapas 1 + 2 (LLM)
     python -m scripts.eval_extraction --extractor profile_llm_simple      # + invitados del LLM (prompt simple)
+    python -m scripts.eval_extraction --extractor claude_code --model sonnet   # piloto: lee lo que dejó run_claude_pilot
 
 Catálogos: por defecto se simulan con los programas y conductores de la referencia (como si el
 usuario ya los hubiera capturado en la app); `--no-catalog` los deja vacíos.
@@ -39,7 +40,7 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_GOLD = DATA_DIR / "gold" / "guests_gold.json"
 DEFAULT_SAMPLES_DIR = DATA_DIR / "samples"
 DEFAULT_OUT_DIR = DATA_DIR / "eval"
-EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple")
+EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple", "claude_code")
 # Extractores que suman los invitados del LLM como segunda opinión (con evidencia literal).
 SECOND_OPINION = ("profile_llm_guests", "profile_llm_simple")
 
@@ -209,7 +210,12 @@ def run(args: argparse.Namespace, client: httpx.Client | None = None) -> int:
         logger.error("[scripts.eval_extraction.run] Ningún video para evaluar (revisa --gold y --samples-dir)")
         return 1
 
-    model = args.model or get_ollama_model()
+    if args.extractor == "claude_code":
+        # Solo lee las predicciones que dejó `scripts.run_claude_pilot`; nunca llama a ningún LLM.
+        args.rescore_only = True
+        model = args.model or "sonnet"
+    else:
+        model = args.model or get_ollama_model()
     # profile_llm_guests guarda aparte lo que propone el LLM (`llm_guests_*.json`) y reutiliza los
     # veredictos de profile_llm (solo lectura), así cada variante se re-puntúa sin repetir llamadas.
     cache_name = {"profile_llm_guests": "llm_guests", "profile_llm_simple": "simple_guests"}.get(
@@ -325,7 +331,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="profile_llm_guests / profile_llm_simple: union = siempre suma lo que el LLM encontró; "
                         "fallback = solo si las reglas no encontraron a nadie")
     p.add_argument("--no-catalog", action="store_true", help="Catálogos de conductores/programas vacíos")
-    p.add_argument("--model", default=None, help="Modelo de Ollama (por defecto OLLAMA_MODEL)")
+    p.add_argument("--model", default=None, help="Modelo de Ollama (por defecto OLLAMA_MODEL); con claude_code, el alias usado en el piloto")
     p.add_argument("--base-url", default=None, help="URL de Ollama (por defecto OLLAMA_BASE_URL)")
     p.add_argument("--gold", type=Path, default=DEFAULT_GOLD)
     p.add_argument("--samples-dir", type=Path, default=DEFAULT_SAMPLES_DIR)

@@ -6,7 +6,7 @@ la app (paso 7, todavía sin implementar). Reglas de contenido: ver docs/PHASE3_
 """
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import JSON, CheckConstraint, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -147,3 +147,36 @@ class StagingContactCandidate(Base):
 
     video: Mapped["Video"] = relationship()  # noqa: F821
     guest_candidate: Mapped[StagingGuestCandidate | None] = relationship(back_populates="contacts")
+
+
+class StagingVideoSuggestion(Base):
+    """Programa y conductores que propone la ingesta para un video; candidatos hasta la revisión.
+
+    Al revisar se asigna el programa al video (`videos.program_id`) y los conductores al programa
+    (`program_host_links`): los conductores son del programa, no del video.
+    """
+
+    __tablename__ = "staging_video_suggestions"
+    __table_args__ = (CheckConstraint(_STATUS_VALUES, name="status_valid"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    video_id: Mapped[int] = mapped_column(
+        ForeignKey("videos.id", ondelete="CASCADE"), unique=True
+    )
+    ingestion_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ingestion_runs.id", ondelete="SET NULL")
+    )
+    # Nombre de un programa del catálogo (nunca uno inventado); null = no se detectó ninguno.
+    program_name: Mapped[str | None] = mapped_column(String(150))
+    host_names: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    # Nombres sin clasificar: [{"name": ..., "guess": "guest" | "host" | "unknown"}]; el humano
+    # decide con "→ invitado" / "→ conductor". La opinión del LLM es solo una pista.
+    doubtful_names: Mapped[list[dict]] = mapped_column(JSON, default=list, server_default="[]")
+    # Conductores que se repiten en la serie pero el texto del video no menciona (un clic).
+    usual_host_names: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+
+    status: Mapped[str] = mapped_column(String(20), server_default="pending", default="pending")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    video: Mapped["Video"] = relationship()  # noqa: F821

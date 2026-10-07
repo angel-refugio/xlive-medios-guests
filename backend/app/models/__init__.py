@@ -15,6 +15,7 @@ from app.models.ingestion import (
     IngestionRunError,
     StagingContactCandidate,
     StagingGuestCandidate,
+    StagingVideoSuggestion,
 )
 from app.models.participation import Participation
 from app.models.user import User
@@ -34,6 +35,7 @@ __all__ = [
     "Program",
     "StagingContactCandidate",
     "StagingGuestCandidate",
+    "StagingVideoSuggestion",
     "Video",
     "VideoType",
     "guest_category_links",

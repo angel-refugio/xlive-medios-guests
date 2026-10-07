@@ -33,7 +33,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.services import claude_extraction, contact_filters, extraction_eval
+from app.services import claude_extraction, contact_candidates, contact_filters, extraction_eval
 from app.services.claude_extraction import ClaudeExtractionError, Usage
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ DEFAULT_OUT_DIR = DATA_DIR / "pilot"        # v1; las demás versiones usan data
 DEFAULT_EVAL_DIR = DATA_DIR / "eval"
 DEFAULT_MODEL = "sonnet"
 TIMEOUT_SECONDS = 900
+CANDIDATE_VERSIONS = ("v5",)   # versiones donde la regex saca los contactos y Claude solo los asocia
 PARSE_ATTEMPTS = 2   # si Claude devuelve un JSON inválido se reintenta una vez
 
 
@@ -164,9 +165,16 @@ def process_batches(
         path = batch_path(args.out_dir, index, batch)
         started = time.monotonic()
         try:
+            candidates = {}
+            if args.instructions in CANDIDATE_VERSIONS:
+                candidates = {
+                    i: contact_candidates.extract_candidates(videos[i]["title"], videos[i].get("description"), ignored)
+                    for i in batch
+                }
             prompt = claude_extraction.build_user_prompt(
                 videos, batch, own_accounts=ignored, known_programs=catalogs["programs"],
                 known_hosts=catalogs["hosts"],
+                contact_candidates={i: [c.as_prompt_dict() for c in cs] for i, cs in candidates.items()} or None,
             )
             usage = Usage()
             for attempt in range(1, PARSE_ATTEMPTS + 1):
@@ -175,6 +183,11 @@ def process_batches(
                 try:
                     result = claude_extraction.parse_batch_output(text, batch)
                     ignored_count = contact_filters.filter_batch(result, ignored)
+                    resolution = {"discarded": 0, "unknown_links": 0, "not_evaluated": 0}
+                    for video in result.videos:
+                        if video.video_id in candidates:
+                            for key, value in contact_candidates.resolve_contacts(video, candidates[video.video_id]).items():
+                                resolution[key] += value
                     break
                 except ClaudeExtractionError:
                     if attempt == PARSE_ATTEMPTS:
@@ -189,6 +202,7 @@ def process_batches(
         path.write_text(json.dumps({
             "model": args.model, "instructions_version": args.instructions,
             "with_catalog": args.with_catalog, "ignored_contacts": ignored_count,
+            "contact_candidates": sum(len(cs) for cs in candidates.values()), "contact_resolution": resolution,
             "video_ids": batch, "usage": _usage_dict(usage),
             "result": result.model_dump(),
         }, ensure_ascii=False, indent=1), encoding="utf-8")

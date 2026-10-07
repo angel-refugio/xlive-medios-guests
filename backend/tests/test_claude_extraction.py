@@ -98,6 +98,20 @@ def test_build_user_prompt_incluye_el_catalogo_validado():
     assert payload["known_programs"] == ["Serie A"] and payload["known_hosts"] == ["Luis Pérez"]
 
 
+def test_build_user_prompt_incluye_los_candidatos_de_contacto_por_video():
+    candidates = {"a1": [{"id": "c1", "type": "email", "value": "a@b.com", "evidence": "a@b.com"}]}
+    prompt = ce.build_user_prompt(_videos(), ["a1", "a2"], contact_candidates=candidates)
+    videos = json.loads(prompt[prompt.index("{"):])["videos"]
+    assert videos[0]["contact_candidates"][0]["id"] == "c1" and videos[1]["contact_candidates"] == []
+    assert "contact_candidates" not in ce.build_user_prompt(_videos(), ["a1"])
+
+
+def test_load_instructions_v5_los_contactos_vienen_de_la_regex():
+    v5 = ce.load_instructions(version="v5")
+    assert "contact_candidates" in v5 and "contact_links" in v5 and "no agregues contactos nuevos" in v5
+    assert '"instructions_version": "v5"' in v5 and "versión v5" in v5 and "Viaje a Marte" not in v5
+
+
 def test_build_user_prompt_lote_vacio_da_error():
     with pytest.raises(ClaudeExtractionError, match=r"build_user_prompt"):
         ce.build_user_prompt(_videos(), [])

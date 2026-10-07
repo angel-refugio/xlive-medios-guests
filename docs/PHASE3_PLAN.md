@@ -467,6 +467,21 @@ Solo documentación: no hay código, migración ni pruebas de esto todavía. Res
   detalle de si una sola tabla los reemplaza se decide al diseñar la migración. Sin migración ni
   código todavía.
 
+**Piloto con Claude Code (2026-10-07): instrucciones v5, la regex extrae y Claude asocia**
+- Los contactos del texto (links, correos, @handles y teléfonos) los saca siempre la regex
+  (`app/services/contact_candidates.py`, que reutiliza `regex_rules.extract_contacts` y suma teléfonos
+  y @handles); los de la lista de ignorados nunca llegan. Claude recibe los candidatos con un id y solo
+  devuelve la decisión de cada uno (`contact_links`: invitado, relación, dudoso, descartar si es de un
+  conductor o ajeno); no puede agregar, omitir ni cambiar valores. Un candidato sin decisión queda sin
+  asignar y dudoso ("no evaluado por Claude").
+- Motivo: dejando que Claude encontrara los contactos, el mismo video dio 7 contactos en una corrida
+  y 3 en otra. Con la regex el conjunto de contactos es el mismo en cada corrida (11 candidatos en
+  150 videos, repetido en dos corridas) y los 13 contactos que el usuario marcó como correctos
+  quedan todos; la asociación a invitados coincidió en 9 de 11 entre corridas (los 2 restantes
+  cambian solo la marca de dudoso o la relación).
+- Los nombres de invitados, conductores y programa no cambiaron con respecto a la v3 dentro del ruido
+  normal entre corridas (~2 puntos).
+
 **Revisión humana**
 - Invitado y contacto se aprueban, editan o rechazan por separado.
 - Si se rechaza un invitado, sus contactos pasan a "sin asignar" (no se borran) y pueden

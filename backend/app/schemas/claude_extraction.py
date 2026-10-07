@@ -58,6 +58,22 @@ class ContactCandidate(BaseModel):
     _clean_guest = field_validator("guest", "possible_guest", "doubtful_reason")(_clean_optional)
 
 
+class ContactLink(BaseModel):
+    """Decisión de Claude sobre un contacto que ya sacó la regex (instrucciones v5): a qué invitado
+    pertenece, su relación y si es dudoso. No puede cambiar el tipo ni el valor del contacto."""
+
+    candidate_id: str = Field(max_length=20)
+    guest: str | None = Field(default=None, max_length=255)
+    relationship: Literal["propio", "manager", "patrocinador"] | None = None
+    doubtful: bool = False
+    doubtful_reason: str | None = Field(default=None, max_length=300)
+    possible_guest: str | None = Field(default=None, max_length=255)
+    # Contacto de un conductor o cuenta ajena: se identifica y NO se guarda.
+    discard: bool = False
+
+    _clean_optional_fields = field_validator("guest", "possible_guest", "doubtful_reason")(_clean_optional)
+
+
 class VideoExtraction(BaseModel):
     """Resultado para un video."""
 
@@ -69,6 +85,8 @@ class VideoExtraction(BaseModel):
     doubtful: list[DoubtfulName] = Field(default_factory=list)
     contacts: list[ContactCandidate] = Field(default_factory=list)
     unassigned_contacts: list[ContactCandidate] = Field(default_factory=list)
+    # Solo v5: asociaciones de Claude; `contacts`/`unassigned_contacts` se arman desde ellas y la regex.
+    contact_links: list[ContactLink] = Field(default_factory=list)
 
     _clean_program = field_validator("program")(_clean_optional)
 

@@ -55,11 +55,16 @@ class FakeClaude:
         if self.calls <= self.invalid_first:
             stdout = json.dumps({"result": "esto no es json", "usage": {"input_tokens": 100, "output_tokens": 50}})
             return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
-        ids = [v["video_id"] for v in json.loads(input[input.index("{"):])["videos"]]
+        payload_videos = json.loads(input[input.index("{"):])["videos"]
         result = json.dumps({"instructions_version": "v1", "videos": [
-            {"video_id": i, "guests": [{"name": f"Invitado {i}"}],
-             "unassigned_contacts": [{"type": "celular", "value": "5512345678"}, *self.extra_contacts]}
-            for i in ids
+            {"video_id": v["video_id"], "guests": [{"name": f"Invitado {v['video_id']}"}],
+             "unassigned_contacts": [{"type": "celular", "value": "5512345678"}, *self.extra_contacts],
+             # v5: una decisión por cada candidato de la regex; el primero se asigna al invitado.
+             "contact_links": [
+                 {"candidate_id": c["id"], "guest": f"Invitado {v['video_id']}" if n == 0 else None}
+                 for n, c in enumerate(v.get("contact_candidates", []))
+             ]}
+            for v in payload_videos
         ]})
         stdout = json.dumps({
             "result": result, "total_cost_usd": 0.1,
@@ -185,6 +190,35 @@ def test_los_enlaces_de_la_lista_de_ignorados_se_descartan_y_se_envian_como_cuen
     assert sum(b["ignored_contacts"] for b in saved) == 3             # uno por video
     assert all("streamyard" not in json.dumps(b["result"]) for b in saved)
     assert "sin asignar: 3" in capsys.readouterr().out                # solo quedan los celulares
+
+
+def test_v5_la_regex_saca_los_contactos_y_claude_solo_los_asocia(tmp_path, capsys):
+    args = _args(tmp_path, "--instructions", "v5")
+    sample = args.samples_dir / "sample_1.json"
+    data = json.loads(sample.read_text(encoding="utf-8"))
+    for video in data["videos"]:
+        video["description"] = (
+            "IG: https://instagram.com/ana\nTel 55 1234 5678\nhttps://streamyard.com/pal/d/1\n@xlivemedios"
+        )
+    sample.write_text(json.dumps(data), encoding="utf-8")
+    runner = FakeClaude(extra_contacts=({"type": "web", "value": "inventado-por-claude.com"},))
+    assert pilot.run(args, runner) == 0
+
+    payload = json.loads(runner.prompts[0][runner.prompts[0].index("{"):])
+    sent = payload["videos"][0]["contact_candidates"]
+    assert [c["type"] for c in sent] == ["instagram", "telefono"]          # StreamYard y la cuenta del canal no llegan
+    saved = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "pilot").glob("batch_*.json")]
+    assert sum(b["contact_candidates"] for b in saved) == 6                 # 2 por video, 3 videos
+    contacts = [c for b in saved for v in b["result"]["videos"] for c in v["contacts"] + v["unassigned_contacts"]]
+    assert len(contacts) == 6 and all("inventado" not in c["value"] for c in contacts)   # lo inventado se descarta
+    assert sum(1 for b in saved for v in b["result"]["videos"] for _ in v["contacts"]) == 3
+    assert "Contactos asignados: 3; sin asignar: 3" in capsys.readouterr().out
+
+
+def test_v3_no_envia_candidatos_de_contacto(tmp_path):
+    runner = FakeClaude()
+    pilot.run(_args(tmp_path, "--instructions", "v3"), runner)
+    assert "contact_candidates" not in runner.prompts[0]
 
 
 def test_sin_with_catalog_no_se_envian_catalogos(tmp_path):

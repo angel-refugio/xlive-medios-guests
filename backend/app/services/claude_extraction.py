@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 # v4 = v3 + regla de "no devolver enlaces de herramientas/promociones del canal". Probada el 2026-10-07: sin
 # ventaja medible sobre v3 (la variación entre corridas de la misma versión es de ~2 puntos), así que
 # v3 sigue siendo la versión por defecto; los enlaces del canal se descartan en código (contact_filters).
-INSTRUCTIONS_VERSIONS = ("v1", "v2", "v3", "v4")
+# v5 = los contactos los saca la regex y Claude solo los asocia (ver contact_candidates).
+INSTRUCTIONS_VERSIONS = ("v1", "v2", "v3", "v4", "v5")
 INSTRUCTIONS_VERSION = "v3"
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 INSTRUCTIONS_PATH = PROMPTS_DIR / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"
@@ -87,7 +88,7 @@ def build_batches(videos: dict[str, dict], max_size: int = DEFAULT_BATCH_SIZE) -
 def build_user_prompt(
     videos: dict[str, dict], batch: list[str], contact_types: list[str] | None = None,
     own_accounts: list[str] | None = None, known_programs: list[str] | None = None,
-    known_hosts: list[str] | None = None,
+    known_hosts: list[str] | None = None, contact_candidates: dict[str, list[dict]] | None = None,
 ) -> str:
     """Mensaje con el lote: los videos y, si existen, tipos de contacto, cuentas propias y los
     programas y conductores ya validados (contexto de las instrucciones v2)."""
@@ -104,6 +105,7 @@ def build_user_prompt(
                 "title": videos[video_id]["title"],
                 "description": videos[video_id].get("description") or "",
                 "published_at": videos[video_id].get("published_at"),
+                **({"contact_candidates": contact_candidates.get(video_id, [])} if contact_candidates is not None else {}),
             }
             for video_id in batch
         ],

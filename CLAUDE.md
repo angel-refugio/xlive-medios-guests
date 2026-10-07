@@ -18,6 +18,9 @@ Organización: categoría, tipo de talento, edad, alcaldía, programa y temporad
 - Los campos son opcionales: un video puede no tener invitados (la IA lo marca "sin invitados", reclasificable por un humano) y un invitado puede tener contactos parciales, editables después.
 - Categoría del invitado (talento) = catálogo configurable N↔N, opcional, creable desde la app; alcaldías = catálogo de CDMX editable; tipo de video (entrevista/evento/podcast…) es catálogo configurable. No hay temporadas; programa y "parte de otro video" son opcionales. Edad aproximada (búsqueda por rangos); alcaldía del invitado y del evento.
 - Todos los videos van bajo el nombre "X Live Medios": nunca mencionar el nombre anterior del canal en el sistema, UI ni datos. Esto no aplica a "Expandete TV": es el nombre de un programa/segmento del catálogo `Program` como cualquier otro (igual que "V2H TV" o "Inzzania TV"), confirmado por el usuario; sus videos se analizan igual que el resto y se asocian a ese programa por catálogo, sin bloqueo ni excepción.
+- Contactos del invitado: cualquier tipo del catálogo `contact_types`; "propio / mánager / patrocinador" es la **relación** del contacto (el patrocinador y el mánager son contactos del invitado, no entidades). Fuentes: texto del video (link, @handle, correo, teléfono; sin scraping ni búsquedas externas) y captura manual. Nunca se inventan.
+- Sin contactos de conductores: se identifican y no se guardan (si un conductor aparece como invitado, es invitado).
+- Contactos protegidos: ocultos por defecto (solo un indicador); verlos, buscarlos, editarlos, aprobarlos o exportarlos pide la contraseña del admin, validada en el backend. Nunca se escriben en logs. Duración del desbloqueo y fase de implementación: pregunta abierta.
 - Todo (consultar, revisar, editar) se hace desde la app, sin SQL, según permisos.
 - Todo dato extraído por IA es candidato hasta validación humana.
 - Trabajar siempre en la fase activa del roadmap; no adelantar fases sin acuerdo.
@@ -31,7 +34,7 @@ Organización: categoría, tipo de talento, edad, alcaldía, programa y temporad
 - Backend: Python + FastAPI
 - BD: PostgreSQL en contenedor Docker; pgAdmin como servicio en `docker-compose.yml` para demo al cliente (DBeaver solo si el usuario lo pide)
 - Frontend: React
-- Extracción de candidatos: LLM local vía Ollama (modelos ~3B; equipo 16 GB RAM sin GPU). Pipeline ligero: solo título y descripción (sin transcripciones), reglas/regex antes del LLM, un video a la vez
+- Extracción de candidatos: **Claude (API de Anthropic)**, decidido por el usuario el 2026-10-07 según `docs/Propuesta_extracción_invitados_Claude.md` (reemplaza a Ollama `qwen2.5:3b`, que sigue en el código hasta que el piloto de 150 videos y la integración lo sustituyan; no se reemplaza antes del piloto). Solo título y descripción (sin transcripciones), reglas/regex antes del LLM, por lotes agrupados por serie. Claude Code o la API comparten instrucciones, JSON de salida e importador. `ANTHROPIC_API_KEY` en `.env`, nunca en Git. Los contactos se extraen y asocian al invitado en la misma llamada
 - Usuario único de la app: "administrador" con todos los permisos (por ahora)
 - Fuente de datos: YouTube Data API v3
 

@@ -146,6 +146,12 @@ Relación N↔N Guest–GuestCategory. Clave primaria compuesta (`guest_id`, `ca
 - `source`: `manual` o `video_description`. `verified` indica validación humana.
 - El patrocinador es un contacto de tipo "patrocinador" con valor y `note` (ej. nombre de la empresa).
 - Nunca se inventan valores.
+- **Modelo objetivo (decidido el 2026-10-07, aún sin migración)**: `guest_id` admite NULL (contacto
+  sin asignar), más valor normalizado, relación (propio / mánager / patrocinador, catálogo
+  editable), video de origen, evidencia, `status` (`candidate` / `validated` / `rejected`) y
+  `source` `manual` / `youtube_description`; único por invitado + tipo + valor normalizado. El
+  patrocinador y el mánager pasan de tipo a relación. Detalle en la adenda de contactos de
+  `PHASE3_PLAN.md`; lo de arriba describe el estado actual.
 
 ### videos
 - `youtube_video_id` único: evita ingesta duplicada. Los metadatos de YouTube viven en columnas propias del video, separados de las entidades de dominio (invitados, participaciones).

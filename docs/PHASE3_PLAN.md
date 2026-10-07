@@ -88,8 +88,205 @@ mensaje al usuario): un `data?.items.map` que no protegía bien contra respuesta
 propia prueba. Con esto termina el paso 7.
 **Paso 8 (cierre) hecho**: documentación general actualizada (`ARCHITECTURE.md`,
 `DATA_MODEL.md`, `README.md`, este plan); 294 pruebas de backend y 117 de frontend pasando.
-Commits propuestos al usuario, pendientes de su decisión (nunca se hace `git push`). Alcance
-según `PROJECT_BRIEF.md`
+Commits propuestos al usuario, pendientes de su decisión (nunca se hace `git push`).
+
+**Adenda tras el cierre**: el usuario pidió un botón de ingesta con lote fijo en 5 videos, para
+una demostración rápida (no la ingesta programada, esa sigue sin construirse a propósito).
+`app.services.pipeline.trigger_manual_run` arma los clientes HTTP y la configuración desde
+variables de entorno y llama a `run_batch`; `POST /ingestion/runs` (`app/api/ingestion.py`) lo
+expone, corriendo de forma síncrona (la petición no responde hasta terminar el lote — puede
+tardar varios minutos con el LLM en CPU). El botón vive en `Staging.jsx`
+(`IngestionRunner.jsx`), arriba de las pestañas. Sigue sin haber ingesta periódica.
+
+**Segunda adenda**: la primera corrida real (5 videos, canal real) mostró un hueco en las
+reglas — una descripción con "Arween Tarot **es el nombre artístico de** Wendolyn Arellano
+Hernández..." no producía ningún candidato, porque el patrón de alta señal solo reconocía "es
+el **seudónimo** artístico de" (no "nombre"), y esas frases de alta señal nunca generaban un
+candidato por regex de todas formas — solo se usaban para la regla de "sin invitados". Se
+corrigió: `regex_rules._STRONG_MARKER_PHRASE` ahora acepta "nombre" o "seudónimo", y se agregó
+un 4° patrón a `extract_name_candidates` (`high_signal`) que si captura el nombre después de
+la frase, con confianza 0.65 (más alta que los otros 3, que son 0.30-0.40). El prompt del LLM
+(`ollama_client.py`) se actualizó igual. Pendiente, identificado pero no corregido a propósito
+(necesita más evidencia real antes de diseñarlo bien): nombres completos en MAYÚSCULAS fuera de
+paréntesis (ej. "HUMBERTO ESTRADA GIGO") siguen sin detectarse por regex.
+
+**Tercera adenda (2026-09-30) — mejora de la extracción de invitados y conductores**: el
+usuario reportó que el LLM (`qwen2.5:3b`, un video a la vez) es muy débil y casi todos los
+videos caen a revisión manual; pidió **no ajustar los umbrales de confianza** sino mejorar la
+extracción, y acercarla a lo que se obtuvo cuando Claude analizó 90 videos juntos (razonamiento
+con contexto de la serie), pero a escala de ~3,500 videos. Enfoque elegido: **opción 1, "dos
+etapas" local** (sin cambiar el stack), midiendo antes de decidir si hace falta la API de
+Claude por lotes (estimada en ~15-20 USD con Sonnet 5.5; cambiaría el stack y enviaría datos
+públicos de YouTube a un servicio externo, así que requiere aprobación explícita).
+- *Etapa 1 (determinista, sobre todo el corpus)*: agrupar videos por programa/plantilla de
+  título y detectar por frecuencia los conductores recurrentes (hashtags repetidos dentro de
+  una serie = conductor o producción; hashtags únicos = invitados), más parser de hashtags
+  (`#KarimmKury` → Karimm Kury) y de títulos (`Programa: A, B y C`).
+- *Etapa 2 (LLM)*: recibe esos candidatos ya extraídos más el perfil de la serie y solo los
+  clasifica (invitado / conductor / banda / tema); ya no descubre nombres desde cero.
+- *Evidencia que motiva el diseño* (leídos los 150 videos de muestra completos): el rol
+  depende de la serie, no del video (Dj Rayas e Imperial Lion son conductores en "Raíz y
+  Cultura" aunque aparezcan tras los dos puntos; Arcángel Negro es conductor en "Música
+  Expansiva" pero invitado en "Entrevista Arcángel Negro en Taco Shock"); ~28% de los videos no
+  nombra a nadie (lo correcto es no inventar).
+- *Referencia para medir*: `backend/data/gold/guests_gold.json` (150 videos, con programa,
+  invitados, conductores y dudosos), etiquetada por Claude y **pendiente de revisión del
+  usuario** (página de revisión con campos editables, publicada como artifact privado:
+  https://claude.ai/artifact/8rr4HdjPPMvF3Dn8AMzAAn; su código y generador están en
+  `backend/data/gold/review_page/`). Sigue **parcialmente revisada**: 10 videos corregidos por
+  el usuario (`reviewed: true`) y 2 marcados "correcto" sin ID; el resto es etiqueta de Claude.
+  Campos extra de la referencia: `program`, `outside_metadata` (nombres que el usuario vio
+  fuera del título/descripción guardados; no se penalizan), `host_aliases`.
+- **Hecho (2026-10-01, sin commitear ni ejecutar)**: evaluación del extractor contra la
+  referencia — `app/services/extraction_eval.py` (puntuación), `scripts/eval_extraction.py`
+  (corre regex + LLM actual con caché reanudable, `--limit`, `--only-reviewed`,
+  `--rescore-only`, `--no-catalog`) y `tests/test_extraction_eval.py`.
+- **Línea base medida (2026-10-02, `qwen2.5:3b`, 10 videos, sin commitear)**: invitados
+  precisión 44 % / recall 50 %; conductores recall 0 % (faltan los 7); programa 4 de 10; 3 roles
+  cambiados; los 3 videos sin invitados de la referencia recibieron invitados inventados.
+  `pytest tests/test_extraction_eval.py`: 47 pasan.
+- **Hecho (2026-10-02, sin commitear ni ejecutar)**: módulo determinista de perfil por serie,
+  `app/services/series_profile.py` (+ `tests/test_series_profile.py` y el extractor
+  `--extractor profile` en `scripts/eval_extraction.py`, instantáneo, sin LLM). Decisiones del
+  usuario: conductor = aparece en al menos 3 videos de la serie y en al menos 50 % de ellos
+  (con el conductor en el catálogo bastan 2 videos); el programa solo se asigna contra el
+  catálogo. Siguiente: que el usuario corra los tests nuevos y
+  `python -m scripts.eval_extraction --extractor profile`, luego `VideoAnalysis` con lista de
+  conductores y el prompt de la etapa 2.
+- **Medición del perfil sin LLM (2026-10-02, 150 videos; catálogos simulados con la propia
+  referencia, así que es optimista)**: invitados 87 % precisión / 79 % recall; conductores
+  94 % / 78 %; programa 97 %; 0 roles cambiados. Solo los 10 revisados por el usuario: invitados
+  70 % / 64 %, conductores recall 29 %. Ajustes posteriores: un hashtag contenido en el nombre de
+  la serie (`#MagX`) no cuenta como conductor; `names_match` iguala nombres con y sin espacios
+  (`7SinsTattoStudio` = `7 Sins Tatto Studio`).
+- **Hecho (2026-10-02, sin commitear ni ejecutar)**: etapa 2, `app/services/candidate_classifier.py`
+  (+ `tests/test_candidate_classifier.py`): el LLM solo da un veredicto (guest / group / host /
+  topic) a los candidatos dudosos (tras los dos puntos, descripción, hashtags sin rol); no agrega
+  nombres y no se llama si no hay dudosos. `ollama_client._call_ollama` acepta un `schema`
+  opcional. Medible con `--extractor profile_llm`; **aún no está conectado a `pipeline.py`** ni
+  a `VideoAnalysis` (conductores como lista): se conecta después de la medición.
+- **Medición de la etapa 2 (2026-10-02, 150 videos)**: con el LLM promoviendo hashtags a
+  invitado y moviendo roles, **empeoró** respecto al perfil solo: invitados 78.8 % / 80.4 %
+  (perfil: 89.3 % / 81.7 %), conductores 91.6 % / 80.6 % (perfil: 98.8 % / 78.7 %), 13 roles
+  cambiados (perfil: 0); lo único que mejoró fue "videos sin invitados con invitados
+  inventados" (9 -> 5). Decisión: por defecto el LLM **solo descarta** lo que no es persona
+  (`apply_verdicts`; no puede descartar un nombre tras los dos puntos que la descripción repite);
+  promover hashtags y mover roles quedan como interruptores (`--promote-hashtags`,
+  `--llm-host-verdict`) para medirlos por separado. La caché de `profile_llm` guarda los
+  veredictos crudos, así que cambiar la política se re-puntúa con `--rescore-only` sin LLM.
+- **Política del LLM medida (2026-10-02, 150 videos)**: solo descartar -> invitados 94.5 % /
+  79.1 %, conductores 98.8 % / 78.7 %, 0 roles cambiados (se queda como política por defecto);
+  + promover hashtags -> 78.9 % / 83.0 % y 9 roles cambiados; + veredicto de conductor -> conductores
+  94.6 % / 80.6 %, invitados 94.4 % / 77.1 %, 3 roles cambiados. Los hashtags sin rol podrían
+  mostrarse en Staging Review como "posibles" de confianza baja (decidir al rediseñarla).
+- **Hecho (2026-10-02, sin ejecutar)**: `series_profile` también lee "Conduce: X" / "Conducen X y Y"
+  en la descripción (fuente `description_conduce`; cuenta para la recurrencia de la serie).
+- **Medición con "Conduce X" en la descripción (2026-10-02, 150 videos)**: perfil + LLM que solo
+  descarta: invitados 94.5 % / 79.1 %, conductores 97.8 % / 81.5 %, programa 96.7 %, 0 roles
+  cambiados. Conocido: "Mayuel" (errata en la descripción) no se corrige a "Mayahuel" (parecido 0.857
+  < 0.9); "Raiz & Cultura" no se reconoce como "Raíz y Cultura" (`&` vs `y`).
+- **Hecho (2026-10-02, sin commitear ni ejecutar) — conectado a `pipeline.py`, solo invitados**:
+  `process_video` arma los invitados con `series_profile` (perfiles calculados una vez por lote con
+  todos los videos de la BD, `_build_series`) + `candidate_classifier` (el LLM solo descarta; si
+  falla se conservan los candidatos); se guardan con `extraction_method='regex'` (no hay migración)
+  y las confianzas que ya existían (`high_signal` / `after_colon`). `analyze_video` se conserva para
+  contactos, categoría (se copia al invitado si es el mismo nombre), tipo de video y alcaldía; sus
+  invitados ya no se usan. **Pendiente**: guardar conductor y programa (hoy no hay dónde en staging;
+  `Video.program_id` existe y los conductores son del programa, `Program.hosts` N↔N) — decidir junto
+  con el rediseño de Staging Review.
+- **Hecho (2026-10-02, sin commitear; pruebas escritas, sin ejecutar) — rediseño de Staging Review
+  por video**: pestaña "Revisión por video" (reemplaza las colas "Invitados candidatos" y "Videos
+  sin invitados"; "Contactos candidatos" se conserva). Una tarjeta por video: texto original a la
+  izquierda; a la derecha programa, conductores e invitados editables, y los botones "Correcto" /
+  "Sin invitados" / "Descartar candidatos". Barra de filtros con contadores (Pendientes, Con
+  contactos, Sin candidatos, Sin invitados, Posibles duplicados) y búsqueda por título.
+  Backend: `GET /staging/review/videos`, `GET /staging/review/counts` y `POST
+  /staging/review/videos/{id}/resolve` (`app/services/staging_review.py`; valida todo antes de
+  escribir; vincula solo con el invitado de nombre idéntico, nunca por parecido).
+  **Etapa B**: migración `0008_staging_video_suggestions` (tabla `staging_video_suggestions`, una
+  fila por video con el programa del catálogo y los conductores propuestos); el pipeline la llena
+  y `python -m scripts.backfill_suggestions` la crea para los videos ya ingeridos. Al resolver, el
+  programa se asigna a `videos.program_id` y los conductores a `program_host_links` (se crean en
+  el catálogo si no existían; no se quitan los que el programa ya tenía); la sugerencia se cierra
+  (aceptada si se envió programa o conductores, rechazada si no). Los conductores son del programa:
+  sin programa no se pueden guardar.
+- **Hecho (2026-10-02, sin commitear; pruebas escritas, sin ejecutar) — "Dudosos" y conductores
+  habituales en Staging Review**: (1) los nombres que la ingesta no puede clasificar (hashtags sin
+  rol) ya no se descartan: se guardan en `staging_video_suggestions.doubtful_names` con la pista del
+  LLM (`guest`/`host`/`unknown`; lo que el LLM llama `topic` es ruido y sí se descarta) y la tarjeta
+  los muestra con "→ invitado", "→ conductor" y "Descartar" (un clic; es la sección "Dudosos" de la
+  página de revisión del artifact). (2) Los conductores que se repiten en la serie pero el texto del
+  video no menciona se guardan en `usual_host_names` y se unen a los del catálogo del programa
+  (asignado o sugerido): botones "+ nombre" de un clic; nunca se asignan solos. Migración
+  `0009_suggestion_doubtful_and_usual_hosts`. Para que los 23 videos ya ingeridos aprovechen las
+  reglas nuevas: `python -m scripts.backfill_suggestions` (completa lo pendiente, solo reglas) o,
+  mejor, `python -m scripts.reprocess_videos --yes` (los vuelve a analizar con el LLM; solo toca lo
+  que nadie ha revisado, sin programa asignado y no marcado "sin invitados").
+- **Reglas nuevas de la descripción (2026-10-02)**: "con nosotros X y Y" (invitados) y los nombres ya
+  no cruzan líneas (`MC PELA` ya no sale como `MC PELA Hoy`); un tratamiento suelto ("Ing") no es
+  nombre.
+- **Experimento: el LLM como segunda opinión de invitados** (`--extractor profile_llm_guests`,
+  `candidate_classifier.second_opinion_guests`): suma los invitados que `analyze_video` encuentra y
+  las reglas no, aceptándolos solo si el nombre aparece literal en el título o la descripción y no es
+  conductor ni programa; modos `union` y `fallback`. **Resultado (2026-10-02, primeros 58 de los 150
+  videos; la corrida con Ollama se trabó y se detuvo en 58)**: **cero aciertos nuevos** (53 aciertos
+  con y sin segunda opinión); `union` agrega 1 falso positivo (precisión 94.6 % -> 93.0 %) y
+  `fallback` no cambia nada. `qwen2.5:3b` devolvió invitados en solo 13 de 58 videos y, en los 5
+  donde las reglas se quedaron cortas, devolvió lista vacía. **Decisión: no se activa en el
+  pipeline** (la función queda por si se prueba un modelo mayor). Mejor camino para esos casos:
+  reglas más completas y los "Dudosos" de un clic.
+- **Reglas nuevas tras ese diagnóstico (2026-10-02, 150 videos)**: `;` separa programa e invitados
+  como `:` ("Revoweed; A, B y C"); una lista entera entre comillas (`"A & B".`) ya no se descarta
+  (era un efecto no deseado de la guarda de comillas); "presenta live set de X". Perfil + LLM que
+  solo descarta: invitados 94.2 % precisión / **84.3 % recall** (antes 94.5 % / 79.1 %), conductores
+  97.8 % / 81.5 %, programa 96.7 %, 0 roles cambiados; solo el perfil: 89.3 % / 86.9 %. Pendiente
+  conocido: "Adictos Hip - Hop" se parte en dos por el guion con espacios.
+- **Segunda opinión del LLM con un prompt simple (2026-10-02, 150 videos)**: el experimento anterior
+  midió un prompt malo, no al modelo: `analyze_video` pide 8 cosas a la vez y además dice "bandas no
+  como invitado", y `qwen2.5:3b` devolvía listas vacías incluso en "VINCENT VAN TRIO". Con **una sola
+  pregunta** ("¿quiénes son los invitados?", `candidate_classifier.simple_guest_names`, extractor
+  `--extractor profile_llm_simple`) y exigiendo que el nombre aparezca literal en el texto:
+  base 94.2 % precisión / 84.3 % recall (123 listas exactas); **modo `fallback` (solo si las reglas no
+  encontraron a nadie) 91.4 % / 90.2 % (130 exactas, +9 aciertos, +5 falsos)**; modo `union`
+  87.5 % / 91.5 % (126 exactas, +11 aciertos, +12 falsos). En los 10 videos revisados por el usuario:
+  recall 63.6 % -> 72.7 % con ambos. Falsos positivos típicos del modo `fallback`: nombres de pila que
+  solo están en hashtags (`#VERO`, `#Lisa`, `#Jordi`) y videos con varios artistas mencionados en la
+  descripción (5 de los 9 falsos vienen de un solo video, "V2H T.V."). **Recomendado, aún sin
+  conectar a `pipeline.py`: modo `fallback`.** **Aprobado y conectado (2026-10-02)**:
+  `pipeline._second_opinion_names` pide la segunda opinión solo cuando las reglas no hallaron
+  invitados; acepta nombres literales en el texto que no sean conductores ni programas; se guardan
+  como `StagingGuestCandidate` con `extraction_method='llm'` y confianza 0.30 (el valor más bajo que
+  ya existía, aprobado por el usuario); si el LLM falla el video se procesa igual; lo que el LLM propone
+  deja de salir como "dudoso". Los videos ya ingeridos y sin revisar se rehacen con
+  `python -m scripts.reprocess_videos --yes`.
+- **Lo que enseñaron las 10 correcciones del usuario**: (1) el texto tras los dos puntos del
+  título es invitado aunque parezca banda o tema ("Viaje a Marte", "Último Respiro"); (2) un
+  hashtag con nombre de persona no es conductor por serlo: lo es el que se repite en la serie
+  (Charli Valerio y Charly Villalobos eran invitados de "Rodando en el Rock"); (3) hay nombres en
+  minúsculas pegados en hashtags (`#juancid`, `#Danielpsicologo`); (4) un evento puede contar como
+  programa ("Expomoto 2023"); (5) `VideoAnalysis.host_match` admite un solo conductor y los
+  videos tienen hasta tres: pasar a lista; (6) dos nombres solo se ven fuera de los datos
+  guardados (pregunta abierta: ¿dónde los vio el usuario? ¿la API recorta la descripción?).
+- **Siguientes pasos, en orden**: (1) el usuario corre `pytest tests/test_extraction_eval.py` y
+  `python -m scripts.eval_extraction --limit 10` (luego completo) y pasa la salida = línea base;
+  (2) módulo determinista de perfil por serie (agrupar por programa/plantilla, conductores por
+  frecuencia, parser de hashtags con camelCase y minúsculas, parser de `Programa: A, B y C`);
+  (3) `VideoAnalysis` con lista de conductores; (4) nuevo prompt: el LLM clasifica candidatos con
+  el perfil de la serie (invitado / conductor / banda / tema); (5) segunda medición contra la
+  línea base; (6) pedir al usuario revisar ~15 videos al azar que no eran dudosos para calibrar
+  el resto de la referencia; (7) con los números, decidir si hace falta la API de Claude por
+  lotes; (8) recién entonces, ajustar Staging Review.
+- **Decisión pendiente**: `backend/data/` completo está en `.gitignore`, así que la referencia
+  y las muestras no se versionan (contienen nombres de personas y el aviso de privacidad sigue
+  pendiente). Se dejó solo local; el usuario puede cambiarlo.
+- **Pendiente acordado — ajustar Staging Review *después* de esta mejora** (no antes): al
+  usuario le resultó más sencilla la página de revisión que la pantalla actual de Staging
+  Review. Ideas a considerar entonces: vista centrada en el video (su texto junto a las
+  etiquetas), campos editables separados (programa, invitados, conductores), filtros con
+  contadores y un botón rápido de "Correcto". No se toca Staging Review hasta cerrar la mejora
+  de extracción.
+
+Alcance según `PROJECT_BRIEF.md`
 (sección 7, FR-007, FR-009, FR-011, FR-013, FR-014 y "Pipeline ligero de IA"). Estado de partida:
 Fase 2 completada (auth, catálogos, invitados, contactos, videos manuales con `source`, participaciones).
 
@@ -221,6 +418,74 @@ Nuevas decisiones de contenido surgidas al validar con datos reales, ya incorpor
 cómo combinar la confianza cruda del LLM con señales objetivas (título+descripción, ambigüedad
 persona/banda); cómo marcar videos casi duplicados sin fusionarlos solos; "Expandete TV" es un
 programa del catálogo, no el nombre prohibido del canal (aclarado también en `CLAUDE.md`).
+
+## Adenda: contactos del invitado (decisiones de 2026-10-07; documentadas, aún sin implementar)
+Solo documentación: no hay código, migración ni pruebas de esto todavía. Resumen en
+`PROJECT_BRIEF.md` (FR-008 y secciones 8-9) y reglas breves en `CLAUDE.md`.
+
+**Fuentes**
+- Automática: links, @handles, correos y teléfonos escritos en título o descripción del video.
+  Sin scraping, búsquedas externas ni importación de contactos del teléfono. Nunca se inventan.
+- Manual: captura progresiva desde la app (Staging Review y ficha del invitado). Entra con origen
+  `manual` y ya validada.
+
+**Extracción**
+- Misma pasada que la de invitados: la regex saca los contactos y Claude (API de Anthropic, ver
+  `docs/Propuesta_extracción_invitados_Claude.md`) los asocia al invitado en la misma llamada, y
+  los devuelve en el JSON por video con tipo, relación, evidencia y marca de dudoso, más una
+  lista de contactos sin asignar. Hasta que el piloto y la integración de esa Propuesta se
+  hagan, el código sigue con Ollama y `staging_contact_candidates`.
+- Lista configurable de cuentas propias (canal, programas y conductores ya validados): sus
+  contactos se descartan.
+- Cada contacto guarda evidencia: `video_id` y fragmento de texto.
+
+**Tabla de contactos del invitado (1 invitado → N contactos)**
+- Campos: invitado (nullable mientras está "sin asignar"), tipo, valor, valor normalizado (para
+  deduplicar), relación, nota, origen (`youtube_description` / `manual`), video de origen,
+  evidencia y estado (`candidate` / `validated` / `rejected`).
+- Tipo: la tabla `contact_types` que ya existe. Se acepta cualquier tipo. Si la extracción halla
+  uno no registrado, lo propone como dudoso con el motivo "tipo no registrado" y el admin lo crea
+  desde la app.
+- Relación: catálogo pequeño y editable (propio, mánager, patrocinador). Patrocinador y mánager
+  son contactos DEL invitado, no entidades ni registros nuevos.
+- Restricción única por invitado + tipo + valor normalizado.
+- Cambios contra el modelo actual (`contacts`, `staging_contact_candidates`), definidos aquí y por
+  implementar: `contacts.guest_id` pasa a admitir NULL (sin asignar) y, al rechazar un invitado,
+  sus contactos no se borran en cascada sino que quedan sin asignar; se agregan valor normalizado,
+  relación, video de origen y evidencia; `source` pasa a `manual` / `youtube_description` (hoy
+  `manual` / `video_description`); la bandera `verified` se reemplaza por `status`
+  (`candidate` / `validated` / `rejected`); el patrocinador y el mánager dejan de ser tipos de
+  contacto y pasan a ser relación. Los contactos manuales entran validados; los aceptados desde
+  la ingesta pasan a `validated` (ya no `verified = false`). Los candidatos de contacto de
+  staging se alinean con esta tabla (evidencia, dudoso con motivo, rechazados recordados); el
+  detalle de si una sola tabla los reemplaza se decide al diseñar la migración. Sin migración ni
+  código todavía.
+
+**Revisión humana**
+- Invitado y contacto se aprueban, editan o rechazan por separado.
+- Si se rechaza un invitado, sus contactos pasan a "sin asignar" (no se borran) y pueden
+  reasignarse.
+- Se pueden agregar contactos extra a mano.
+- Los contactos pueden marcarse como dudosos con motivo visible; habrá un filtro "con contactos
+  dudosos".
+- Los rechazados se recuerdan para no volver a proponerse al reprocesar.
+
+**Casos ambiguos**
+- Varios invitados y un contacto: se asigna solo con evidencia clara (handle parecido al nombre,
+  cercanía en el texto, el mismo contacto ligado en otro video); si no, queda sin asignar y
+  dudoso ("varios invitados posibles").
+- Un invitado y varios contactos: cada uno se evalúa por separado; los que no coinciden quedan
+  dudosos y pueden indicar un "posible invitado no detectado", que se puede crear desde ahí.
+- Contactos de conductores: se identifican y NO se guardan. Si un conductor aparece como
+  invitado, se trata como invitado.
+
+**Pendiente de decidir fase: protección por contraseña (no se planea aquí)**
+Por defecto, búsquedas, fichas y Staging Review muestran invitados sin contactos (solo un
+indicador, p. ej. "3 contactos 🔒"). Ver, buscar por contacto, modificar, aprobar o exportar
+contactos requeriría reingresar la contraseña del admin, con un permiso temporal (propuesta: 10
+minutos, sin confirmar), aplicado en el backend. Los contactos no se escriben en los logs y sí
+entran en las exportaciones, con la misma contraseña. Toca la autenticación de la Fase 2 y la
+exportación de la Fase 5, así que falta decidir en qué fase se implementa.
 
 ## Reglas que siguen aplicando
 Pruebas escritas por Claude y ejecutadas por el usuario; no ejecutar instalaciones/pytest/docker/npm desde Claude; commits locales, nunca `git push`; código en inglés, docs y comentarios en español; nada de secretos en Git; nunca mencionar el nombre anterior del canal; no inventar datos: todo dato de IA es candidato.

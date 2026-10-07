@@ -148,6 +148,24 @@ talento. No se debe fabricar ninguna información.
   editable a futuro. Se guarda la alcaldía del invitado (donde vive) y, por
   separado, la del evento o entrevista (a nivel de video). Ambas son
   referencias opcionales al catálogo y filtrables.
+- **Contactos (decisiones confirmadas)**:
+  - *Tipos*: se acepta cualquier tipo del catálogo `contact_types` (redes
+    sociales, teléfonos, correo, páginas, etc.). Si la extracción encuentra
+    un tipo no registrado, lo propone como dudoso con el motivo "tipo no
+    registrado" y el administrador lo crea desde la app.
+  - *Relación*: catálogo pequeño y editable (propio, mánager, patrocinador).
+    El patrocinador y el mánager son contactos DEL invitado, no entidades ni
+    registros nuevos.
+  - *Conductores excluidos*: los contactos de conductores se identifican y
+    no se guardan. Si un conductor aparece como invitado, se trata como
+    invitado.
+  - *Contraseña*: por defecto las búsquedas, fichas y Staging Review
+    muestran invitados sin contactos (solo un indicador, p. ej. "3
+    contactos 🔒"). Ver, buscar por contacto, modificar, aprobar o exportar
+    contactos exige reingresar la contraseña del administrador, que abre un
+    permiso temporal. La protección se aplica en el backend. Los contactos
+    no se escriben en los logs. Duración y fase: ver sección 8.
+  - Detalle de extracción, revisión y casos ambiguos: `docs/PHASE3_PLAN.md`.
 
 ### FR-009 Validación manual
 Toda información extraída o inferida automáticamente debe ser revisable por
@@ -170,7 +188,9 @@ Instagram, Facebook, TikTok, representante/manager, patrocinador, etc.) al
 que se pueden agregar tipos nuevos sin modificar la estructura de la base de
 datos. Cada contacto (`contacts`) relaciona un invitado con un tipo y
 guarda su valor, una nota opcional (ej. nombre de la empresa patrocinadora),
-la fuente (manual / descripción de video) y una bandera "verificado". Así un
+la fuente (manual / descripción de video) y una bandera "verificado" (el
+modelo objetivo reemplaza la bandera por un estado y agrega relación,
+evidencia y valor normalizado; ver FR-008 y `docs/PHASE3_PLAN.md`). Así un
 invitado puede tener solo Instagram y correo, y otro celular, página web y
 representante, sin campos vacíos innecesarios. El contacto de patrocinador
 pertenece al invitado (su patrocinador personal). Ningún dato de contacto se
@@ -186,8 +206,10 @@ completarse luego.
 YouTube Data API no entrega celulares ni correos de terceros; no se hace
 scraping. Los contactos se obtienen así:
 - **Automático (candidatos)**: enlaces a páginas/redes oficiales y correos
-  que aparezcan en título o descripción del video, extraídos
-  con Ollama y validados en Staging Review (FR-009).
+  que aparezcan en título o descripción del video (más teléfonos y @handles),
+  extraídos con regex y asociados al invitado por Claude en la misma llamada
+  que extrae los invitados (antes, Ollama), y validados en Staging Review
+  (FR-009).
 - **Llenado progresivo bajo demanda**: teléfono, correo y contacto de
   patrocinador se capturan manualmente solo cuando se necesitan; la búsqueda
   indica qué invitados están "sin contacto".
@@ -280,7 +302,10 @@ inferido automáticamente es un candidato hasta su validación humana.
 - Base de datos: PostgreSQL en contenedor Docker; pgAdmin como servicio en
   `docker-compose.yml` para demostración (DBeaver solo si se solicita)
 - Frontend: React
-- Extracción de candidatos: LLM local vía Ollama (modelos ~3B)
+- Extracción de candidatos: Claude (API de Anthropic), decidido por el usuario
+  el 2026-10-07 (ver `docs/Propuesta_extracción_invitados_Claude.md`); Ollama
+  local (modelos ~3B) fue el motor de la Fase 3 y se reemplaza tras el piloto
+  de 150 videos
 - Fuente de datos: YouTube Data API v3
 
 ### Pipeline ligero de IA
@@ -366,6 +391,16 @@ respuesta. No se deben perder al reiniciar el proyecto.
 - **Qué datos del patrocinador** se guardan (empresa, persona, teléfono,
   correo); por ahora se guarda como contacto tipo "patrocinador" con valor y
   nota. Responsable: supervisor.
+- ✔ **Qué campos de contacto del invitado se almacenarán** (resuelta):
+  cualquier tipo del catálogo `contact_types`, con valor, valor normalizado,
+  relación (propio / mánager / patrocinador), nota, origen
+  (`youtube_description` / `manual`), video de origen, evidencia y estado
+  (candidato / validado / rechazado). Sin contactos de conductores. Ver
+  FR-008 y `docs/PHASE3_PLAN.md`.
+- **Reautenticación por contraseña para contactos**: duración del desbloqueo
+  (propuesta: 10 minutos, sin confirmar) y en qué fase se implementa (toca la
+  autenticación de la Fase 2 y la exportación de la Fase 5). Responsable:
+  usuario/supervisor.
 - **Aviso de privacidad/consentimiento** para almacenar datos personales de
   invitados (LFPDPPP). Responsable: supervisor.
 - **Formato y columnas de la exportación**, y **plazo** desde el cual un
@@ -398,11 +433,19 @@ respuesta. No se deben perder al reiniciar el proyecto.
   sistema.
 - Contactos: catálogo de tipos + contactos por invitado; el patrocinador es
   del invitado; un invitado puede quedar "sin contacto".
+- El patrocinador y el mánager son contactos del invitado (relación del
+  contacto), no entidades ni registros nuevos.
+- No se guardan contactos de conductores; si un conductor aparece como
+  invitado, se trata como invitado.
+- Fuentes de contactos: solo texto del video (link, @handle, correo,
+  teléfono) y captura manual; sin scraping, búsquedas externas ni
+  importación de contactos del teléfono.
 - No se usan transcripciones de video: el LLM analiza solo título y
   descripción.
 - Único usuario de la app: "administrador" con todos los permisos.
-- Hardware de referencia: 16 GB de RAM, sin GPU dedicada; Ollama local con
-  modelos ~3B.
+- Hardware de referencia: 16 GB de RAM, sin GPU dedicada (motivo del Ollama
+  local con modelos ~3B de la Fase 3). Desde el 2026-10-07 el extractor pasa a
+  Claude (API de Anthropic) según la Propuesta; queda pendiente el piloto.
 - No se importan contactos personales del teléfono del supervisor (privacidad).
 - No existe actualmente ningún Excel, base de datos o registro
   estructurado previo de invitados: la recolección inicial debe hacerse

@@ -10,6 +10,12 @@ export function createFakeBackend({
   participations = [], // { id, guest_id, video_id, notes }
   guestCandidates = [], // ver STAGING_GUEST_CANDIDATE_DEFAULTS
   contactCandidates = [], // ver STAGING_CONTACT_CANDIDATE_DEFAULTS
+  suggestions = [], // { video_id, program_name, host_names, status } (programa y conductores sugeridos)
+  programHosts = {}, // { [program_id]: ["Nombre de conductor", ...] } (conductores ya registrados)
+  // Resultado del botón "Ingesta" (POST /ingestion/runs): un objeto fijo, o una función
+  // (body) => resultado para simular distintos conteos/errores según el batch_size pedido.
+  // Por defecto: corrida exitosa que "proceso" todo el lote pedido, sin errores.
+  ingestionRun,
   pageSize = 2,
   onRequest,
 } = {}) {
@@ -22,6 +28,8 @@ export function createFakeBackend({
     participations: structuredClone(participations),
     guestCandidates: structuredClone(guestCandidates),
     contactCandidates: structuredClone(contactCandidates),
+    suggestions: structuredClone(suggestions),
+    programHosts: structuredClone(programHosts),
     catalogs: {
       boroughs: [
         { id: 1, name: "Coyoacán", is_active: true },
@@ -40,6 +48,10 @@ export function createFakeBackend({
         { id: 2, name: "Evento", is_active: true },
       ],
       programs: [{ id: 1, name: "Buenos días", is_active: true }],
+      hosts: [
+        { id: 1, name: "Dante", is_active: true },
+        { id: 2, name: "Mose Griffin", is_active: true },
+      ],
     },
     nextId: 1000,
   };
@@ -119,7 +131,7 @@ export function createFakeBackend({
     if (pathname === "/auth/me") return fakeResponse(200, { username: "admin", role: "administrador" });
 
     if (
-      (m = pathname.match(/^\/(boroughs|guest-categories|contact-types|video-types|programs)$/)) &&
+      (m = pathname.match(/^\/(boroughs|guest-categories|contact-types|video-types|programs|hosts)$/)) &&
       method === "GET"
     ) {
       return fakeResponse(200, db.catalogs[m[1]].filter((i) => i.is_active));
@@ -354,6 +366,146 @@ export function createFakeBackend({
       candidate.status = "rejected";
       candidate.reviewed_at = new Date().toISOString();
       return fakeResponse(200, contactCandidateOut(candidate));
+    }
+
+    // ---- Revisión por video (se consideran "ingeridos" los videos con source "youtube") ----
+    const pendingGuests = (videoId) => db.guestCandidates.filter((c) => c.video_id === videoId && c.status === "pending");
+    const pendingContacts = (videoId) => db.contactCandidates.filter((c) => c.video_id === videoId && c.status === "pending");
+    const pendingSuggestion = (videoId) => db.suggestions.find((s) => s.video_id === videoId && (s.status ?? "pending") === "pending");
+    const reviewFilters = {
+      pending: (v) => pendingGuests(v.id).length > 0 || Boolean(pendingSuggestion(v.id)),
+      with_contacts: (v) => pendingContacts(v.id).length > 0,
+      no_candidates: (v) =>
+        pendingGuests(v.id).length === 0 && pendingContacts(v.id).length === 0 && !pendingSuggestion(v.id) && v.guest_status === "pending",
+      no_guests: (v) => v.guest_status === "no_guests",
+      duplicates: (v) => Boolean(v.possible_duplicate_of_video_id),
+    };
+    const reviewVideos = (filter, q) =>
+      db.videos
+        .filter((v) => v.source === "youtube" && reviewFilters[filter](v))
+        .filter((v) => !q || v.title.toLowerCase().includes(q.toLowerCase()));
+
+    if (pathname === "/staging/review/counts" && method === "GET") {
+      const q = params.get("q") || "";
+      return fakeResponse(200, Object.fromEntries(Object.keys(reviewFilters).map((f) => [f, reviewVideos(f, q).length])));
+    }
+
+    if (pathname === "/staging/review/videos" && method === "GET") {
+      const page = pageOf(reviewVideos(params.get("filter") || "pending", params.get("q") || ""), params);
+      return fakeResponse(200, {
+        ...page,
+        items: page.items.map((v) => {
+          const suggestion = pendingSuggestion(v.id);
+          const suggestedProgram = suggestion?.program_name
+            ? db.catalogs.programs.find((p) => p.name.toLowerCase() === suggestion.program_name.toLowerCase())
+            : null;
+          return {
+            id: v.id,
+            youtube_video_id: v.youtube_video_id,
+            title: v.title,
+            description: v.description ?? null,
+            published_at: v.published_at ?? null,
+            guest_status: v.guest_status,
+            possible_duplicate_of_video_id: v.possible_duplicate_of_video_id ?? null,
+            program_id: v.program?.id ?? null,
+            suggested_program_id: suggestedProgram?.id ?? null,
+            suggested_host_names: suggestion?.host_names ?? [],
+            program_host_names: v.program ? db.programHosts[v.program.id] ?? [] : [],
+            doubtful_names: suggestion?.doubtful_names ?? [],
+            usual_host_names: [
+              ...(suggestion?.usual_host_names ?? []),
+              ...(db.programHosts[v.program?.id ?? suggestedProgram?.id] ?? []),
+            ].filter((name, i, all) => all.indexOf(name) === i && !(suggestion?.host_names ?? []).includes(name)),
+            guest_candidates: pendingGuests(v.id),
+            contact_candidates: pendingContacts(v.id),
+          };
+        }),
+      });
+    }
+
+    if ((m = pathname.match(/^\/staging\/review\/videos\/(\d+)\/resolve$/)) && method === "POST") {
+      const video = db.videos.find((v) => v.id === Number(m[1]));
+      if (!video) return fakeResponse(404, { detail: `No existe el video ${m[1]}` });
+      const guestsIn = body.guests ?? [];
+      const rejectIds = body.reject_candidate_ids ?? [];
+      const added = body.added_guests ?? [];
+      if (body.no_guests && (guestsIn.length || added.length)) {
+        return fakeResponse(422, { detail: "No se puede marcar 'sin invitados' y a la vez aceptar o agregar invitados" });
+      }
+      const hostNames = body.host_names ?? [];
+      if (hostNames.length && !body.program_id && !video.program) {
+        return fakeResponse(422, { detail: "Para guardar conductores elige primero el programa del video" });
+      }
+      const acceptedIds = [];
+      const linkGuest = (name) => {
+        let guest = db.guests.find((g) => g.full_name.toLowerCase() === name.toLowerCase());
+        if (!guest) {
+          guest = guestFromPayload({ full_name: name }, db.nextId++);
+          db.guests.push(guest);
+        }
+        if (!db.participations.some((p) => p.guest_id === guest.id && p.video_id === video.id)) {
+          db.participations.push({ id: db.nextId++, guest_id: guest.id, video_id: video.id, notes: null });
+        }
+        acceptedIds.push(guest.id);
+      };
+      for (const item of guestsIn) {
+        const candidate = db.guestCandidates.find((c) => c.id === item.candidate_id);
+        if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${item.candidate_id}` });
+        linkGuest(item.full_name || candidate.extracted_name);
+        candidate.status = "accepted";
+      }
+      for (const id of rejectIds) {
+        const candidate = db.guestCandidates.find((c) => c.id === id);
+        if (candidate) candidate.status = "rejected";
+      }
+      for (const item of added) linkGuest(item.full_name);
+      let rejected = rejectIds.length;
+      if (body.no_guests) {
+        for (const candidate of pendingGuests(video.id)) {
+          candidate.status = "rejected";
+          rejected += 1;
+        }
+        video.guest_status = "no_guests";
+      } else if (acceptedIds.length) {
+        video.guest_status = "has_guests";
+      }
+      if (body.program_id) video.program = catalogItem("programs", body.program_id);
+      const hostIds = [];
+      for (const name of hostNames) {
+        let host = db.catalogs.hosts.find((h) => h.name.toLowerCase() === name.toLowerCase());
+        if (!host) {
+          host = { id: db.nextId++, name, is_active: true };
+          db.catalogs.hosts.push(host);
+        }
+        hostIds.push(host.id);
+        const linked = (db.programHosts[video.program.id] ??= []);
+        if (!linked.includes(host.name)) linked.push(host.name);
+      }
+      const suggestion = pendingSuggestion(video.id);
+      if (suggestion) suggestion.status = body.program_id || hostNames.length ? "accepted" : "rejected";
+      return fakeResponse(200, {
+        video_id: video.id, guest_status: video.guest_status, accepted_guest_ids: acceptedIds,
+        rejected_count: rejected, program_id: video.program?.id ?? null, host_ids: hostIds,
+      });
+    }
+
+    // ---- Ingesta ----
+    if (pathname === "/ingestion/runs" && method === "POST") {
+      if (typeof ingestionRun === "function") return fakeResponse(201, ingestionRun(body));
+      if (ingestionRun) return fakeResponse(201, ingestionRun);
+      const batchSize = body.batch_size ?? 30;
+      return fakeResponse(201, {
+        id: db.nextId++,
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        status: "completed",
+        trigger: "manual",
+        requested_batch_size: batchSize,
+        processed_count: batchSize,
+        success_count: batchSize,
+        error_count: 0,
+        errors: [],
+      });
     }
 
     return fakeResponse(404, { detail: `Ruta no simulada: ${method} ${pathname}` });

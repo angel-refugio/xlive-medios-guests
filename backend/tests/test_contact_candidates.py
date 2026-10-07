@@ -49,7 +49,7 @@ def test_un_handle_no_se_toma_de_un_correo_ni_de_una_url():
 
 
 def test_el_handle_que_ya_esta_en_una_url_no_se_repite():
-    found = cc.extract_candidates("t", "https://instagram.com/cheloramirezmusic\n@cheloramirezmusic y @otra_cuenta")
+    found = cc.extract_candidates("t", "https://instagram.com/cuenta_demo\n@cuenta_demo y @otra_cuenta")
     assert _by_type(found, "handle") == ["@otra_cuenta"]
 
 

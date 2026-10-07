@@ -62,11 +62,22 @@ docker-compose.yml   PostgreSQL + pgAdmin
 4. **Videos**: se cargan a mano (quedan con origen «Manual») o los trae la ingesta de la Fase 3
    (origen «YouTube»). Los videos de prueba manuales se localizan con el filtro «Origen → Manuales»
    y se borran desde su detalle.
-5. **Staging Review** (Fase 3): en "Invitados candidatos" y "Contactos candidatos" se revisa lo que
-   propuso la ingesta — aceptar (crea o vincula, sugiriendo invitados parecidos para no duplicar),
-   editar antes de aceptar, o rechazar. En "Videos sin invitados" se reclasifican los que la IA
-   marcó así por error. La ingesta en sí (traer videos del canal y analizarlos) todavía se dispara
-   por código (`app.services.pipeline.run_batch`), sin un botón ni un disparador programado en la app.
+5. **Staging Review** (Fase 3): arriba hay un botón "Correr ingesta ahora (5 videos)" — trae videos
+   nuevos del canal y los analiza con reglas + IA; el lote está fijo en 5 a propósito
+   (demostración rápida) y la corrida tarda varios minutos porque el LLM corre en CPU local, sin
+   GPU. Requiere `YOUTUBE_API_KEY` y Ollama corriendo con el modelo de `OLLAMA_MODEL` ya
+   descargado. La pestaña **Revisión por video** muestra una tarjeta por video (texto original a
+   la izquierda; programa, conductores e invitados editables a la derecha): "Correcto" acepta todo
+   de una vez, y se puede corregir un nombre, quitar un candidato, agregar un invitado, marcar
+   "Sin invitados" o descartar. La barra de filtros tiene contadores (Pendientes, Con contactos,
+   Sin candidatos, Sin invitados, Posibles duplicados) y búsqueda por título. El programa solo se
+   sugiere si existe en Catálogos, y los conductores son del programa (sin programa no se
+   guardan). Los nombres que la ingesta no pudo clasificar salen en **Dudosos** con "→ invitado" /
+   "→ conductor", y los conductores habituales del programa se ofrecen con un clic. Para videos ya
+   ingeridos antes de tener sugerencias: `python -m scripts.backfill_suggestions` (solo reglas) o
+   `python -m scripts.reprocess_videos --yes` (los vuelve a analizar con el LLM; solo los que nadie ha
+   revisado; sin `--yes` solo simula) (desde `backend/`). La pestaña **Contactos
+   candidatos** se conserva. Sigue sin existir una ingesta programada; el botón es manual, a propósito.
 
 Reglas de la API que la interfaz respeta: los borrados exigen `?confirm=true` (la app pide confirmación
 antes), los listados grandes se paginan (50 por defecto, máximo 200) y los catálogos se desactivan en
@@ -77,8 +88,9 @@ lugar de borrarse.
   participaciones muestran los primeros 200 registros.
 - Fusionar categorías (FR-004) quedó sin hacer.
 - Sin exportación (Fase 5) ni seguimiento de re-contacto (Fase 6).
-- Ingesta sin disparador automático ni botón en la app todavía (FR-011): se corre por código; construir
-  quién la llama y cuándo se deja para una fase final.
+- Ingesta sin disparador automático/periódico (FR-011): solo el botón manual de Staging Review,
+  con lote fijo en 5. Construir la programada (y hacer el lote configurable) se deja para una
+  fase final.
 - Aviso de privacidad (LFPDPPP) pendiente con el dueño del canal antes de la carga histórica masiva
   (Fase 7).
 

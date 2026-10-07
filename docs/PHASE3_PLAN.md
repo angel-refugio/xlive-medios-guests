@@ -437,6 +437,12 @@ Solo documentación: no hay código, migración ni pruebas de esto todavía. Res
   hagan, el código sigue con Ollama y `staging_contact_candidates`.
 - Lista configurable de cuentas propias (canal, programas y conductores ya validados): sus
   contactos se descartan.
+  La lista también cubre enlaces fijos del canal que no son contactos de un invitado (herramientas de
+  transmisión, enlaces de afiliado o descuento; p. ej. `streamyard.com`, que aparece en muchas
+  descripciones). Se aplica en código sobre lo que devuelve Claude (`app/services/contact_filters.py`,
+  lista en `app/config/ignored_contacts.json`) y también se le pasa al modelo (instrucciones v4). Un
+  patrocinador del invitado sigue siendo contacto del invitado. Cuando exista la tabla de contactos,
+  la lista se editará desde la app.
 - Cada contacto guarda evidencia: `video_id` y fragmento de texto.
 
 **Tabla de contactos del invitado (1 invitado → N contactos)**

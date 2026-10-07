@@ -41,7 +41,7 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_GOLD = DATA_DIR / "gold" / "guests_gold.json"
 DEFAULT_SAMPLES_DIR = DATA_DIR / "samples"
 DEFAULT_OUT_DIR = DATA_DIR / "eval"
-EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple", "claude_code", "claude_code_v2", "claude_code_v3")
+EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple", "claude_code", "claude_code_v2", "claude_code_v3", "claude_code_v4")
 # Extractores que suman los invitados del LLM como segunda opinión (con evidencia literal).
 SECOND_OPINION = ("profile_llm_guests", "profile_llm_simple")
 

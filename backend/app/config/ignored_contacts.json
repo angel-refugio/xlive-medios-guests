@@ -1,0 +1,7 @@
+{
+  "descripcion": "Enlaces y cuentas fijas del canal que NO son contactos de un invitado (cuentas propias del canal, herramientas y enlaces de afiliado). Coincidencia sin mayúsculas, sin http(s):// ni www.; basta con que el valor contenga el texto. Se editará desde la app cuando exista la tabla de contactos.",
+  "patterns": [
+    "streamyard.com",
+    "@xlivemedios"
+  ]
+}

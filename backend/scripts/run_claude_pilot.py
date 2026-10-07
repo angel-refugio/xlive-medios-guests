@@ -33,7 +33,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from app.services import claude_extraction, extraction_eval
+from app.services import claude_extraction, contact_filters, extraction_eval
 from app.services.claude_extraction import ClaudeExtractionError, Usage
 
 logger = logging.getLogger(__name__)
@@ -154,6 +154,7 @@ def process_batches(
     args.out_dir.mkdir(parents=True, exist_ok=True)
     instructions = claude_extraction.load_instructions(version=args.instructions)
     catalogs = load_catalogs(args)
+    ignored = contact_filters.load_ignored_patterns()
     command = claude_command(args.model, instructions)
     failures = 0
     done = saved_batches(args.out_dir)
@@ -164,7 +165,8 @@ def process_batches(
         started = time.monotonic()
         try:
             prompt = claude_extraction.build_user_prompt(
-                videos, batch, known_programs=catalogs["programs"], known_hosts=catalogs["hosts"],
+                videos, batch, own_accounts=ignored, known_programs=catalogs["programs"],
+                known_hosts=catalogs["hosts"],
             )
             usage = Usage()
             for attempt in range(1, PARSE_ATTEMPTS + 1):
@@ -172,6 +174,7 @@ def process_batches(
                 usage.add(call_usage)   # cada intento cuenta en los tokens
                 try:
                     result = claude_extraction.parse_batch_output(text, batch)
+                    ignored_count = contact_filters.filter_batch(result, ignored)
                     break
                 except ClaudeExtractionError:
                     if attempt == PARSE_ATTEMPTS:
@@ -185,7 +188,8 @@ def process_batches(
             continue
         path.write_text(json.dumps({
             "model": args.model, "instructions_version": args.instructions,
-            "with_catalog": args.with_catalog, "video_ids": batch, "usage": _usage_dict(usage),
+            "with_catalog": args.with_catalog, "ignored_contacts": ignored_count,
+            "video_ids": batch, "usage": _usage_dict(usage),
             "result": result.model_dump(),
         }, ensure_ascii=False, indent=1), encoding="utf-8")
         logger.info(
@@ -279,7 +283,7 @@ def run(args: argparse.Namespace, runner=subprocess.run) -> int:
         path.write_text(json.dumps(predictions, ensure_ascii=False, indent=1), encoding="utf-8")
         print_summary(args, total, len(predictions), contacts)
         return 0
-    except (ClaudeExtractionError, extraction_eval.EvalError) as exc:
+    except (ClaudeExtractionError, extraction_eval.EvalError, contact_filters.ContactFilterError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

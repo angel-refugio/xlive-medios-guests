@@ -40,7 +40,8 @@ class FakeClaude:
     un número muy grande = siempre inválida).
     """
 
-    def __init__(self, fail_first: bool = False, invalid_first: int = 0):
+    def __init__(self, fail_first: bool = False, invalid_first: int = 0, extra_contacts: tuple = ()):
+        self.extra_contacts = list(extra_contacts)
         self.calls = 0
         self.fail_first = fail_first
         self.invalid_first = invalid_first
@@ -57,7 +58,7 @@ class FakeClaude:
         ids = [v["video_id"] for v in json.loads(input[input.index("{"):])["videos"]]
         result = json.dumps({"instructions_version": "v1", "videos": [
             {"video_id": i, "guests": [{"name": f"Invitado {i}"}],
-             "unassigned_contacts": [{"type": "celular", "value": "5512345678"}]}
+             "unassigned_contacts": [{"type": "celular", "value": "5512345678"}, *self.extra_contacts]}
             for i in ids
         ]})
         stdout = json.dumps({
@@ -172,6 +173,18 @@ def test_with_catalog_pasa_programas_y_conductores_de_la_referencia(tmp_path):
     assert payload["known_programs"] == ["Serie A"] and payload["known_hosts"] == ["Luis Pérez"]
     saved = json.loads(next((tmp_path / "pilot").glob("batch_*.json")).read_text(encoding="utf-8"))
     assert saved["with_catalog"] is True and saved["instructions_version"] == DEFAULT
+
+
+def test_los_enlaces_de_la_lista_de_ignorados_se_descartan_y_se_envian_como_cuentas_propias(tmp_path, capsys):
+    streamyard = {"type": "web", "value": "https://streamyard.com/pal/d/48378033"}
+    runner = FakeClaude(extra_contacts=(streamyard,))
+    assert pilot.run(_args(tmp_path), runner) == 0
+    payload = json.loads(runner.prompts[0][runner.prompts[0].index("{"):])
+    assert "streamyard.com" in payload["own_accounts"]
+    saved = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "pilot").glob("batch_*.json")]
+    assert sum(b["ignored_contacts"] for b in saved) == 3             # uno por video
+    assert all("streamyard" not in json.dumps(b["result"]) for b in saved)
+    assert "sin asignar: 3" in capsys.readouterr().out                # solo quedan los celulares
 
 
 def test_sin_with_catalog_no_se_envian_catalogos(tmp_path):

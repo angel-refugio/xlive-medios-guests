@@ -33,6 +33,13 @@ def test_load_instructions_trae_la_version_y_las_reglas_de_contactos():
     assert "varios invitados posibles" in text and "tipo no registrado" in text
 
 
+def test_load_instructions_v4_ignora_enlaces_del_canal_sin_perder_los_patrocinadores():
+    v3, v4 = ce.load_instructions(version="v3"), ce.load_instructions(version="v4")
+    assert "herramientas, promociones" not in v3 and "herramientas, promociones" in v4
+    assert "Un patrocinador del invitado sí es un" in v4          # el patrocinador del invitado sigue siendo contacto
+    assert "Viaje a Marte" not in v4 and '"instructions_version": "v4"' in v4 and "versión v4" in v4
+
+
 def test_load_instructions_v3_no_contradice_la_regla_de_los_dos_puntos():
     v2, v3 = ce.load_instructions(version="v2"), ce.load_instructions(version="v3")
     assert "Viaje a Marte" in v2 and "Viaje a Marte" not in v3     # el ejemplo que contradecía la regla

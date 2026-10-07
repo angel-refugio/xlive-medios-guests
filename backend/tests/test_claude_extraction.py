@@ -33,6 +33,17 @@ def test_load_instructions_trae_la_version_y_las_reglas_de_contactos():
     assert "varios invitados posibles" in text and "tipo no registrado" in text
 
 
+def test_load_instructions_v1_y_v2_existen_y_v2_trae_los_catalogos():
+    v1, v2 = ce.load_instructions(version="v1"), ce.load_instructions(version="v2")
+    assert "known_programs" not in v1 and "known_programs" in v2 and "known_hosts" in v2
+    assert '"instructions_version": "v2"' in v2 and "versión v2" in v2
+
+
+def test_load_instructions_version_desconocida_da_error():
+    with pytest.raises(ClaudeExtractionError, match=r"load_instructions.*v9"):
+        ce.load_instructions(version="v9")
+
+
 def test_load_instructions_archivo_inexistente_da_error_con_modulo(tmp_path):
     with pytest.raises(ClaudeExtractionError, match=r"claude_extraction\.load_instructions"):
         ce.load_instructions(tmp_path / "no_existe.md")
@@ -65,6 +76,12 @@ def test_build_user_prompt_incluye_videos_tipos_y_cuentas_propias():
     assert [v["video_id"] for v in payload["videos"]] == ["a1", "a2"]
     assert payload["videos"][1]["description"] == ""   # None se envía como texto vacío
     assert payload["contact_types"] == ["instagram"] and payload["own_accounts"] == ["@xlivemedios"]
+
+
+def test_build_user_prompt_incluye_el_catalogo_validado():
+    prompt = ce.build_user_prompt(_videos(), ["a1"], known_programs=["Serie A"], known_hosts=["Luis Pérez"])
+    payload = json.loads(prompt[prompt.index("{"):])
+    assert payload["known_programs"] == ["Serie A"] and payload["known_hosts"] == ["Luis Pérez"]
 
 
 def test_build_user_prompt_lote_vacio_da_error():

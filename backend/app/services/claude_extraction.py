@@ -19,8 +19,11 @@ from app.services import series_profile
 
 logger = logging.getLogger(__name__)
 
-INSTRUCTIONS_VERSION = "v1"
-INSTRUCTIONS_PATH = Path(__file__).resolve().parents[1] / "prompts" / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"
+# v1 = piloto sin catálogos (2026-10-07); v2 = con programas y conductores validados como contexto.
+INSTRUCTIONS_VERSIONS = ("v1", "v2")
+INSTRUCTIONS_VERSION = "v2"
+PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
+INSTRUCTIONS_PATH = PROMPTS_DIR / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"
 DEFAULT_BATCH_SIZE = 15
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -38,8 +41,12 @@ def _fail(function: str, detail: str, cause: Exception | None = None) -> ClaudeE
     return error
 
 
-def load_instructions(path: Path = INSTRUCTIONS_PATH) -> str:
+def load_instructions(path: Path | None = None, version: str = INSTRUCTIONS_VERSION) -> str:
     """Texto de las instrucciones (el mismo archivo para Claude Code y para la API)."""
+    if path is None:
+        if version not in INSTRUCTIONS_VERSIONS:
+            raise _fail("load_instructions", f"Versión de instrucciones desconocida: {version!r}")
+        path = PROMPTS_DIR / f"extraction_instructions_{version}.md"
     try:
         return Path(path).read_text(encoding="utf-8")
     except OSError as exc:
@@ -75,14 +82,18 @@ def build_batches(videos: dict[str, dict], max_size: int = DEFAULT_BATCH_SIZE) -
 
 def build_user_prompt(
     videos: dict[str, dict], batch: list[str], contact_types: list[str] | None = None,
-    own_accounts: list[str] | None = None,
+    own_accounts: list[str] | None = None, known_programs: list[str] | None = None,
+    known_hosts: list[str] | None = None,
 ) -> str:
-    """Mensaje con el lote: los videos y, si existen, tipos de contacto y cuentas propias."""
+    """Mensaje con el lote: los videos y, si existen, tipos de contacto, cuentas propias y los
+    programas y conductores ya validados (contexto de las instrucciones v2)."""
     if not batch:
         raise _fail("build_user_prompt", "El lote está vacío")
     payload = {
         "contact_types": contact_types or [],
         "own_accounts": own_accounts or [],
+        "known_programs": known_programs or [],
+        "known_hosts": known_hosts or [],
         "videos": [
             {
                 "video_id": video_id,

@@ -41,10 +41,11 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_GOLD = DATA_DIR / "gold" / "guests_gold.json"
 DEFAULT_SAMPLES_DIR = DATA_DIR / "samples"
-DEFAULT_OUT_DIR = DATA_DIR / "pilot"
+DEFAULT_OUT_DIR = DATA_DIR / "pilot"        # v1; las demás versiones usan data/pilot_<versión>
 DEFAULT_EVAL_DIR = DATA_DIR / "eval"
 DEFAULT_MODEL = "sonnet"
 TIMEOUT_SECONDS = 900
+PARSE_ATTEMPTS = 2   # si Claude devuelve un JSON inválido se reintenta una vez
 
 
 def claude_command(model: str, instructions: str) -> list[str]:
@@ -119,9 +120,31 @@ def saved_batches(out_dir: Path) -> set[tuple[str, ...]]:
     return saved
 
 
-def eval_cache_path(eval_dir: Path, model: str) -> Path:
+def default_out_dir(version: str) -> Path:
+    return DEFAULT_OUT_DIR if version == "v1" else DATA_DIR / f"pilot_{version}"
+
+
+def eval_cache_path(eval_dir: Path, model: str, version: str = "v1") -> Path:
+    """Caché que lee `eval_extraction`: `claude_code` para v1 y `claude_code_<versión>` para el resto."""
     safe_model = re.sub(r"[^\w.-]+", "_", model)
-    return eval_dir / f"predictions_claude_code_{safe_model}.json"
+    extractor = "claude_code" if version == "v1" else f"claude_code_{version}"
+    return eval_dir / f"predictions_{extractor}_{safe_model}.json"
+
+
+def load_catalogs(args: argparse.Namespace) -> dict[str, list[str]]:
+    """Programas y conductores que se le dan a Claude como contexto (solo con --with-catalog).
+
+    Se simulan con los de la referencia, igual que `eval_extraction` y como si el usuario ya los
+    hubiera validado en la app: es optimista, pero deja comparar en igualdad de condiciones con
+    el pipeline anterior.
+    """
+    if not args.with_catalog:
+        return {"programs": [], "hosts": []}
+    gold = extraction_eval.load_gold(args.gold)
+    return {
+        "programs": sorted({e["program"] for e in gold.values() if e.get("program")}),
+        "hosts": sorted({h for e in gold.values() for h in e["hosts"]}),
+    }
 
 
 def process_batches(
@@ -129,7 +152,8 @@ def process_batches(
 ) -> int:
     """Corre los lotes pendientes y guarda cada resultado. Devuelve cuántos fallaron."""
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    instructions = claude_extraction.load_instructions()
+    instructions = claude_extraction.load_instructions(version=args.instructions)
+    catalogs = load_catalogs(args)
     command = claude_command(args.model, instructions)
     failures = 0
     done = saved_batches(args.out_dir)
@@ -139,16 +163,29 @@ def process_batches(
         path = batch_path(args.out_dir, index, batch)
         started = time.monotonic()
         try:
-            prompt = claude_extraction.build_user_prompt(videos, batch)
-            text, usage = run_claude(command, prompt, runner)
-            result = claude_extraction.parse_batch_output(text, batch)
+            prompt = claude_extraction.build_user_prompt(
+                videos, batch, known_programs=catalogs["programs"], known_hosts=catalogs["hosts"],
+            )
+            usage = Usage()
+            for attempt in range(1, PARSE_ATTEMPTS + 1):
+                text, call_usage = run_claude(command, prompt, runner)
+                usage.add(call_usage)   # cada intento cuenta en los tokens
+                try:
+                    result = claude_extraction.parse_batch_output(text, batch)
+                    break
+                except ClaudeExtractionError:
+                    if attempt == PARSE_ATTEMPTS:
+                        raise
+                    logger.warning(
+                        "[scripts.run_claude_pilot.process_batches] Lote %d: respuesta inválida, reintento", index,
+                    )
         except ClaudeExtractionError as exc:
             failures += 1
             logger.warning("[scripts.run_claude_pilot.process_batches] Lote %d falló: %s", index, exc)
             continue
         path.write_text(json.dumps({
-            "model": args.model, "instructions_version": claude_extraction.INSTRUCTIONS_VERSION,
-            "video_ids": batch, "usage": _usage_dict(usage),
+            "model": args.model, "instructions_version": args.instructions,
+            "with_catalog": args.with_catalog, "video_ids": batch, "usage": _usage_dict(usage),
             "result": result.model_dump(),
         }, ensure_ascii=False, indent=1), encoding="utf-8")
         logger.info(
@@ -181,8 +218,8 @@ def load_results(out_dir: Path) -> tuple[dict[str, dict], dict[str, tuple[int, i
 
 def measure_overhead(args: argparse.Namespace, runner=subprocess.run) -> Usage:
     """Una llamada mínima con las mismas instrucciones: los tokens fijos de Claude Code."""
-    command = claude_command(args.model, claude_extraction.load_instructions())
-    _, usage = run_claude(command, 'Responde solo con {"instructions_version": "v1", "videos": []}', runner)
+    command = claude_command(args.model, claude_extraction.load_instructions(version=args.instructions))
+    _, usage = run_claude(command, 'Responde solo con {"instructions_version": "x", "videos": []}', runner)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "overhead.json").write_text(json.dumps(_usage_dict(usage), indent=1), encoding="utf-8")
     return usage
@@ -208,7 +245,8 @@ def print_summary(args: argparse.Namespace, total: Usage, videos_done: int, cont
             net_in = max(total.total_input_tokens - overhead.total_input_tokens * total.calls, 0)
             net = (net_in * args.price_in + total.output_tokens * args.price_out) / 1_000_000
             print(f"Sin los tokens fijos de Claude Code: {net:.4f} USD = {net / videos_done * 1000:.2f} USD por 1,000 videos")
-    print("Mide la calidad con: python -m scripts.eval_extraction --extractor claude_code")
+    extractor = "claude_code" if args.instructions == "v1" else f"claude_code_{args.instructions}"
+    print(f"Mide la calidad con: python -m scripts.eval_extraction --extractor {extractor} --model {args.model}")
 
 
 def run(args: argparse.Namespace, runner=subprocess.run) -> int:
@@ -236,7 +274,7 @@ def run(args: argparse.Namespace, runner=subprocess.run) -> int:
             return 1
         if not args.summary_only and len(predictions) < len(ids):
             print(f"Faltan {len(ids) - len(predictions)} de {len(ids)} videos sin resultado; vuelve a correr el comando.")
-        path = eval_cache_path(args.eval_dir, args.model)
+        path = eval_cache_path(args.eval_dir, args.model, args.instructions)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(predictions, ensure_ascii=False, indent=1), encoding="utf-8")
         print_summary(args, total, len(predictions), contacts)
@@ -249,6 +287,10 @@ def run(args: argparse.Namespace, runner=subprocess.run) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Piloto de extracción con Claude Code.")
     p.add_argument("--model", default=DEFAULT_MODEL, help="Alias o nombre del modelo de Claude Code")
+    p.add_argument("--instructions", choices=claude_extraction.INSTRUCTIONS_VERSIONS,
+                   default=claude_extraction.INSTRUCTIONS_VERSION, help="Versión de las instrucciones")
+    p.add_argument("--with-catalog", action="store_true",
+                   help="Pasar a Claude los programas y conductores validados (se simulan con la referencia)")
     p.add_argument("--limit", type=int, default=None, help="Solo los primeros N videos de la referencia")
     p.add_argument("--batch-size", type=int, default=claude_extraction.DEFAULT_BATCH_SIZE)
     p.add_argument("--summary-only", action="store_true", help="No llamar a Claude; resumir lo ya guardado")
@@ -257,14 +299,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--price-out", type=float, default=None, help="USD por millón de tokens de salida")
     p.add_argument("--gold", type=Path, default=DEFAULT_GOLD)
     p.add_argument("--samples-dir", type=Path, default=DEFAULT_SAMPLES_DIR)
-    p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
+    p.add_argument("--out-dir", type=Path, default=None, help="Por defecto data/pilot (v1) o data/pilot_<versión>")
     p.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
-    return run(build_parser().parse_args(argv))
+    args = build_parser().parse_args(argv)
+    args.out_dir = args.out_dir or default_out_dir(args.instructions)
+    return run(args)
 
 
 if __name__ == "__main__":

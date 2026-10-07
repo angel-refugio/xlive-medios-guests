@@ -33,16 +33,26 @@ def _args(tmp_path, *extra):
 
 
 class FakeClaude:
-    """Reemplaza subprocess.run: responde con un guest por video y cuenta las llamadas."""
+    """Reemplaza subprocess.run: responde con un guest por video y cuenta las llamadas.
 
-    def __init__(self, fail_first: bool = False):
+    `invalid_first` = respuestas con JSON inválido antes de la primera buena (0 = siempre buena;
+    un número muy grande = siempre inválida).
+    """
+
+    def __init__(self, fail_first: bool = False, invalid_first: int = 0):
         self.calls = 0
         self.fail_first = fail_first
+        self.invalid_first = invalid_first
+        self.prompts: list[str] = []
 
     def __call__(self, command, input=None, **kwargs):
         self.calls += 1
+        self.prompts.append(input)
         if self.fail_first and self.calls == 1:
             return SimpleNamespace(returncode=1, stdout="", stderr="límite de uso")
+        if self.calls <= self.invalid_first:
+            stdout = json.dumps({"result": "esto no es json", "usage": {"input_tokens": 100, "output_tokens": 50}})
+            return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
         ids = [v["video_id"] for v in json.loads(input[input.index("{"):])["videos"]]
         result = json.dumps({"instructions_version": "v1", "videos": [
             {"video_id": i, "guests": [{"name": f"Invitado {i}"}],
@@ -68,7 +78,7 @@ def test_run_guarda_lotes_y_predicciones_para_la_evaluacion(tmp_path, capsys):
     assert pilot.run(args, runner) == 0
     assert runner.calls == 2                                  # lote de la serie A + lote de sueltos
     assert len(list((tmp_path / "pilot").glob("batch_*.json"))) == 2
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
     assert cache["a1"] == {"guests": ["Invitado a1"], "hosts": [], "program": ""}
     out = capsys.readouterr().out
     assert "Videos con resultado: 3" in out and "sin asignar: 3" in out
@@ -112,7 +122,7 @@ def test_run_limit_usa_solo_los_primeros_videos(tmp_path):
     args = _args(tmp_path, "--limit", "2")
     runner = FakeClaude()
     pilot.run(args, runner)
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
     assert set(cache) == {"a1", "a2"}
 
 
@@ -121,7 +131,7 @@ def test_lote_con_el_mismo_numero_pero_otros_videos_no_se_salta(tmp_path, capsys
     pilot.run(_args(tmp_path, "--limit", "1"), FakeClaude())
     runner = FakeClaude()
     assert pilot.run(_args(tmp_path), runner) == 0
-    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet").read_text(encoding="utf-8"))
+    cache = json.loads(pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v2").read_text(encoding="utf-8"))
     assert set(cache) == {"a1", "a2", "s1"}
     assert runner.calls == 2                                  # [a1, a2] y [s1]; el lote [a1] no cuenta
     assert "sin resultado" not in capsys.readouterr().out
@@ -148,6 +158,55 @@ def test_overhead_guarda_los_tokens_fijos_y_el_resumen_los_resta(tmp_path, capsy
     assert pilot.run(_args(tmp_path, "--price-in", "3", "--price-out", "15"), FakeClaude()) == 0
     out = capsys.readouterr().out
     assert "Tokens fijos de Claude Code por llamada" in out and "Sin los tokens fijos" in out
+
+
+def test_with_catalog_pasa_programas_y_conductores_de_la_referencia(tmp_path):
+    args = _args(tmp_path, "--with-catalog")
+    gold = json.loads(args.gold.read_text(encoding="utf-8"))
+    gold["videos"]["a1"].update({"program": "Serie A", "hosts": ["Luis Pérez"]})
+    args.gold.write_text(json.dumps(gold), encoding="utf-8")
+    runner = FakeClaude()
+    assert pilot.run(args, runner) == 0
+    payload = json.loads(runner.prompts[0][runner.prompts[0].index("{"):])
+    assert payload["known_programs"] == ["Serie A"] and payload["known_hosts"] == ["Luis Pérez"]
+    saved = json.loads(next((tmp_path / "pilot").glob("batch_*.json")).read_text(encoding="utf-8"))
+    assert saved["with_catalog"] is True and saved["instructions_version"] == "v2"
+
+
+def test_sin_with_catalog_no_se_envian_catalogos(tmp_path):
+    runner = FakeClaude()
+    pilot.run(_args(tmp_path), runner)
+    payload = json.loads(runner.prompts[0][runner.prompts[0].index("{"):])
+    assert payload["known_programs"] == [] and payload["known_hosts"] == []
+
+
+def test_json_invalido_se_reintenta_una_vez_y_cuenta_los_tokens_de_ambos_intentos(tmp_path):
+    runner = FakeClaude(invalid_first=1)
+    assert pilot.run(_args(tmp_path, "--limit", "2"), runner) == 0   # un solo lote: [a1, a2]
+    assert runner.calls == 2
+    saved = json.loads(next((tmp_path / "pilot").glob("batch_*.json")).read_text(encoding="utf-8"))
+    assert saved["usage"]["input_tokens"] == 200 and saved["usage"]["calls"] == 2
+
+
+def test_json_invalido_en_los_dos_intentos_deja_el_lote_pendiente(tmp_path, capsys):
+    runner = FakeClaude(invalid_first=99)
+    assert pilot.run(_args(tmp_path, "--limit", "2"), runner) == 1
+    assert runner.calls == 2
+    assert not list((tmp_path / "pilot").glob("batch_*.json"))
+    assert "Todavía no hay lotes" in capsys.readouterr().out
+
+
+def test_nombres_de_cache_y_carpeta_por_version(tmp_path):
+    assert pilot.eval_cache_path(tmp_path, "sonnet", "v1").name == "predictions_claude_code_sonnet.json"
+    assert pilot.eval_cache_path(tmp_path, "sonnet", "v2").name == "predictions_claude_code_v2_sonnet.json"
+    assert pilot.default_out_dir("v1").name == "pilot" and pilot.default_out_dir("v2").name == "pilot_v2"
+
+
+def test_instructions_v1_usa_las_instrucciones_y_el_nombre_de_v1(tmp_path, capsys):
+    runner = FakeClaude()
+    assert pilot.run(_args(tmp_path, "--instructions", "v1"), runner) == 0
+    assert pilot.eval_cache_path(tmp_path / "eval", "sonnet", "v1").exists()
+    assert "--extractor claude_code --model sonnet" in capsys.readouterr().out
 
 
 def test_run_claude_sin_comando_en_el_path(tmp_path, monkeypatch):

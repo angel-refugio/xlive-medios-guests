@@ -15,7 +15,8 @@ Ejecutar desde backend/ (venv activo, Ollama corriendo):
     python -m scripts.eval_extraction --extractor profile   # etapa 1 sin LLM (instantáneo)
     python -m scripts.eval_extraction --extractor profile_llm --limit 10   # etapas 1 + 2 (LLM)
     python -m scripts.eval_extraction --extractor profile_llm_simple      # + invitados del LLM (prompt simple)
-    python -m scripts.eval_extraction --extractor claude_code --model sonnet   # piloto: lee lo que dejó run_claude_pilot
+    python -m scripts.eval_extraction --extractor claude_code --model sonnet   # piloto v1: lee lo que dejó run_claude_pilot
+    python -m scripts.eval_extraction --extractor claude_code_v2 --model sonnet   # piloto con instrucciones v2
 
 Catálogos: por defecto se simulan con los programas y conductores de la referencia (como si el
 usuario ya los hubiera capturado en la app); `--no-catalog` los deja vacíos.
@@ -40,7 +41,7 @@ DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DEFAULT_GOLD = DATA_DIR / "gold" / "guests_gold.json"
 DEFAULT_SAMPLES_DIR = DATA_DIR / "samples"
 DEFAULT_OUT_DIR = DATA_DIR / "eval"
-EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple", "claude_code")
+EXTRACTORS = ("baseline", "profile", "profile_llm", "profile_llm_guests", "profile_llm_simple", "claude_code", "claude_code_v2")
 # Extractores que suman los invitados del LLM como segunda opinión (con evidencia literal).
 SECOND_OPINION = ("profile_llm_guests", "profile_llm_simple")
 
@@ -210,7 +211,7 @@ def run(args: argparse.Namespace, client: httpx.Client | None = None) -> int:
         logger.error("[scripts.eval_extraction.run] Ningún video para evaluar (revisa --gold y --samples-dir)")
         return 1
 
-    if args.extractor == "claude_code":
+    if args.extractor in ("claude_code", "claude_code_v2"):
         # Solo lee las predicciones que dejó `scripts.run_claude_pilot`; nunca llama a ningún LLM.
         args.rescore_only = True
         model = args.model or "sonnet"

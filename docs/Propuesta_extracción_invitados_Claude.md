@@ -74,6 +74,16 @@ Con Claude Sonnet 5.5, el costo total por la carga histórica más 3 años de op
 
 Supuestos: \~400 tokens de entrada y \~100 de salida por video, más contexto por lote; \~10 videos nuevos al mes (360 en 3 años); tipo de cambio \~17.15 MXN/USD ([UnoTV, sept. 2026](https://www.unotv.com/dolar-hoy/tipo-de-cambio-hoy-17-de-septiembre-dolar-cotiza-en-17-15-pesos/)); precios por millón de tokens según [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing). Los rangos incluyen margen por reintentos y pruebas. Procesar el histórico con la Batch API reduce esa parte a la mitad.
 
+**Medición del piloto (2026-10-07, 150 videos con Claude Code, `sonnet` = `claude-sonnet-5-5`):** se usaron ~195 tokens de entrada y ~238 de salida por video sin contar los ~5,900 tokens fijos que Claude Code agrega a cada llamada (~1,263 de entrada y ~241 de salida por video contándolos; 27 llamadas, ~5.6 videos por llamada). Con los precios de [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing) (Sonnet 5.5: 2 USD de entrada y 10 USD de salida por millón de tokens; Haiku 4.5: 1 y 5; Opus 5.5: 4 y 20) y los mismos supuestos de la tabla (3,500 videos del histórico por la API normal, sin descuento por lotes, y 360 videos nuevos en 3 años, uno por llamada), el rango va del cálculo sin los tokens fijos al cálculo con ellos:
+
+| Modelo | Total (USD) | Total (MXN) |
+| --- | --- | --- |
+| Claude Haiku 4.5 | 5–11 | 90–195 |
+| **Claude Sonnet 5.5** | **11–23** | **185–390** |
+| Claude Opus 5.5 | 21–45 | 365–775 |
+
+Los rangos de la tabla de arriba se mantienen: la entrada resultó la mitad de lo supuesto y la salida más del doble, y se compensan. Los tokens fijos de Claude Code no existen en la API directa, pero las instrucciones sí se envían en cada llamada, por eso el extremo alto es una cota al alza.
+
 **Nota sobre contactos:** extraer y asociar contactos agrega pocos tokens por video (el texto ya se envía y la salida crece unas líneas), así que el estimado prácticamente no cambia; las cifras de la tabla no se modifican.
 
 **Opción para el histórico: Claude Code (suscripción Pro).** El histórico puede procesarse con Claude Code, incluido en la suscripción Pro que ya se tiene, sin costo adicional. En ese caso solo se paga la API para los videos nuevos: \~4–9 USD (\~70–155 MXN) en 3 años con Sonnet 5.5. La ingesta automática de videos nuevos sí requiere la API: la suscripción no incluye créditos de API ni puede conectarse al backend.

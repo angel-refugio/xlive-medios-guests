@@ -97,6 +97,45 @@ def test_name_candidate_no_duplica_nombre_repetido_en_titulo_y_descripcion():
     assert len([m for m in names if m.name == "Karimm Kury"]) == 1
 
 
+# --- extract_name_candidates: patrón de alta señal (high_signal) -----------------
+# Caso real que motivó agregarlo: un video con "es el nombre artístico de" en la
+# descripción no producía ningún candidato (ni por regex ni por el LLM).
+
+def test_name_candidate_alta_senal_nombre_artistico():
+    names = extract_name_candidates(
+        "Con las Estrellas Arween Tarot",
+        "Arween Tarot es el nombre artístico de Wendolyn Arellano Hernández, una tarotista.",
+    )
+    assert any(m.name == "Wendolyn Arellano Hernández" and m.pattern == "high_signal" for m in names)
+
+
+def test_name_candidate_alta_senal_seudonimo_artistico():
+    names = extract_name_candidates("", "MC Luka es el seudónimo artístico de Luis Cárdenas.")
+    assert any(m.name == "Luis Cárdenas" and m.pattern == "high_signal" for m in names)
+
+
+def test_name_candidate_alta_senal_invitado_dos_puntos():
+    names = extract_name_candidates("Invitado: Juan Perez", "")
+    assert any(m.name == "Juan Perez" and m.pattern == "high_signal" for m in names)
+    assert len([m for m in names if m.name == "Juan Perez"]) == 1  # no también como after_colon
+
+
+def test_name_candidate_alta_senal_presenta_a():
+    names = extract_name_candidates("El programa presenta a Maria Lopez hoy", "")
+    assert any(m.name == "Maria Lopez" and m.pattern == "high_signal" for m in names)
+
+
+def test_name_candidate_alta_senal_nombre_real():
+    names = extract_name_candidates("", "Su nombre real: Ana Torres")
+    assert any(m.name == "Ana Torres" and m.pattern == "high_signal" for m in names)
+
+
+def test_name_candidate_sin_marcador_no_dispara_alta_senal():
+    # "presenta" solo (sin "a") no cuenta; ya lo cubre after_colon si hay dos puntos.
+    names = extract_name_candidates("MC LUKA Presenta: El Mechero Del Abuelo", "")
+    assert not any(m.pattern == "high_signal" for m in names)
+
+
 # --- is_no_guests_candidate ------------------------------------------------------
 
 def test_no_guests_titulo_y_descripcion_genericos():
@@ -120,6 +159,10 @@ def test_no_guests_falso_si_hay_palabra_clave_invitado():
 
 def test_no_guests_falso_si_hay_marcador_fuerte():
     assert is_no_guests_candidate("Invitado: alguien", "") is False
+
+
+def test_no_guests_falso_si_hay_nombre_artistico():
+    assert is_no_guests_candidate("X es el nombre artístico de Y", "") is False
 
 
 def test_no_guests_falso_si_hay_descripcion_no_vacia():

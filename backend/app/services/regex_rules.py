@@ -3,9 +3,10 @@
 Tres cosas, según la sección "Reglas del pipeline" de docs/PHASE3_PLAN.md:
 1. `extract_contacts`: contactos candidatos en la descripción (URLs, `ETIQUETA:` + usuario,
    correos), siempre con `source='video_description'` una vez aceptados en Staging Review.
-2. `extract_name_candidates`: los 3 "patrones regex adicionales" de nombre por formato
-   (confianza baja/media: después de dos puntos, `con Nombre`, MAYÚSCULAS entre paréntesis),
-   para cubrir nombres sin palabra clave explícita.
+2. `extract_name_candidates`: nombres candidatos por regex. Los 3 "patrones regex adicionales"
+   de formato (confianza baja/media: después de dos puntos, `con Nombre`, MAYÚSCULAS entre
+   paréntesis) más uno de alta señal (`Invitado:`, `presenta a`, `es el nombre/seudónimo
+   artístico de`...) que sí anuncia el nombre explícitamente, con más confianza.
 3. `is_no_guests_candidate`: detecta "sin invitados" (FR-014) con una regla conservadora de
    4 condiciones simultáneas — si falta cualquiera, el video va a la cola normal, nunca se
    auto-clasifica "sin invitados" por default.
@@ -93,7 +94,24 @@ _CON_NOMBRE_RE = re.compile(rf"\b[Cc]on[ \t]+({_TITLE_CASE_NAME})\b")
 # (3) Texto en MAYÚSCULAS dentro de paréntesis.
 _UPPERCASE_PARENS_RE = re.compile(r"\(([A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9 ]{2,})\)")
 
+# (4) Frases de "alta señal" que anuncian un nombre explícito (Invitado:, presenta a, nombre
+# real:, es el seudónimo/nombre artístico de...). "(?i:...)" aísla la insensibilidad a
+# mayúsculas SOLO a la frase; si se aplicara a todo el patrón (con un `(?i)` normal) también
+# volvería insensible a mayúsculas la parte que exige Título Caso, y dejaría de servir para
+# distinguir nombres (mismo error que ya se corrigió una vez en `con_nombre`).
+_STRONG_MARKER_PHRASE = (
+    r"(?:invitad[ao]\s*:|presenta a|nombre real\s*:"
+    r"|es el (?:seud[oó]nimo|nombre)(?:\s+art[ií]stico)?\s+de)"
+)
+_STRONG_NAME_MARKER_RE = re.compile(rf"(?i:{_STRONG_MARKER_PHRASE})")
+_HIGH_SIGNAL_NAME_RE = re.compile(rf"(?i:{_STRONG_MARKER_PHRASE})[ \t]+({_TITLE_CASE_NAME})")
+
+# Orden importa para el deduplicado de extract_name_candidates: si un mismo nombre coincide
+# con dos patrones a la vez (p. ej. "Invitado: Juan Pérez" matchea tanto high_signal como
+# after_colon), se queda con el primero que lo encuentre — high_signal va primero para que
+# gane la clasificación de mayor confianza.
 _NAME_PATTERNS = (
+    ("high_signal", _HIGH_SIGNAL_NAME_RE),
     ("after_colon", _AFTER_COLON_RE),
     ("con_nombre", _CON_NOMBRE_RE),
     ("uppercase_parens", _UPPERCASE_PARENS_RE),
@@ -110,11 +128,12 @@ class NameCandidateMatch:
 
 
 def extract_name_candidates(title: str, description: str | None) -> list[NameCandidateMatch]:
-    """Nombres candidatos por los 3 patrones de formato (confianza baja/media).
+    """Nombres candidatos por regex: 3 patrones de formato (confianza baja/media) y uno de
+    alta señal (`high_signal`: el texto anuncia el nombre casi literalmente).
 
-    A diferencia de las palabras clave de alta señal (`Invitado:`, `presenta a`...), estos
-    patrones también pueden matchear nombres de programa o frases genéricas, así que su
-    confianza numérica la decide el orquestador (paso 6), no este módulo.
+    Los 3 de formato también pueden matchear nombres de programa o frases genéricas; el de
+    alta señal es más confiable porque depende de una frase explícita, no solo de mayúsculas.
+    La confianza numérica de cada uno la asigna el orquestador (paso 6), no este módulo.
     """
     combined = f"{title}\n{description or ''}"
     matches: list[NameCandidateMatch] = []
@@ -130,17 +149,12 @@ def extract_name_candidates(title: str, description: str | None) -> list[NameCan
 
 
 def _has_recognizable_name(text: str) -> bool:
-    """Cualquiera de los 3 patrones de formato de arriba, sin distinguir cuál."""
+    """Cualquiera de los 4 patrones de nombre de arriba, sin distinguir cuál."""
     return any(regex.search(text) for _, regex in _NAME_PATTERNS)
 
 
 # --- "Sin invitados" (FR-014) --------------------------------------------------
 
-# Nombre propio "fuerte": palabras clave de alta señal que anuncian un nombre explícito,
-# no el formato genérico de arriba (esas son "confianza baja/media", no "fuertes").
-_STRONG_NAME_MARKER_RE = re.compile(
-    r"(?i)(invitad[ao]\s*:|presenta a|nombre real\s*:|es el seud[oó]nimo(?: art[ií]stico)? de)"
-)
 _GUEST_KEYWORD_RE = re.compile(
     r"(?i)\b(invitad\w*|presenta a|conduce\w*|entrevista\w*|platicamos con)\b"
 )

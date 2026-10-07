@@ -25,8 +25,9 @@ descripción (no hay transcripción). Responde ÚNICAMENTE JSON que cumpla el es
 
 Reglas de contenido (síguelas exactamente; todo lo que propongas es candidato, no dato final):
 - Invitado: prioriza patrones de alta señal ("Invitado:", "presenta a", "nombre real:", \
-"es el seudónimo artístico de"). Si el nombre aparece en el título Y la descripción, \
-raw_confidence alta (0.7-1.0); si aparece solo en la descripción, media/baja (0.3-0.6).
+"es el nombre artístico de", "es el seudónimo artístico de"). Si el nombre aparece en el \
+título Y la descripción, raw_confidence alta (0.7-1.0); si aparece solo en la descripción, \
+media/baja (0.3-0.6).
 - Bandas o colectivos: marca is_possible_group=true, no los propongas como invitado individual.
 - category_match: solo con texto biográfico que lo sustente; si no hay categoría existente \
 que aplique pero el texto sí sustenta una, usa category_is_new_suggestion=true con el nombre \
@@ -84,15 +85,21 @@ def _build_prompt(
     )
 
 
-def _call_ollama(client: httpx.Client, base_url: str, model: str, prompt: str) -> str:
-    """POST a /api/generate sin streaming, pidiendo salida conforme al esquema. Texto crudo."""
+def _call_ollama(
+    client: httpx.Client, base_url: str, model: str, prompt: str, schema: dict | None = None,
+) -> str:
+    """POST a /api/generate sin streaming, pidiendo salida conforme al esquema. Texto crudo.
+
+    Sin `schema`, el de `VideoAnalysis`; otros módulos (p. ej. el clasificador de candidatos)
+    pasan el suyo.
+    """
     try:
         response = client.post(
             f"{base_url}/api/generate",
             json={
                 "model": model,
                 "prompt": prompt,
-                "format": VideoAnalysis.model_json_schema(),
+                "format": schema or VideoAnalysis.model_json_schema(),
                 "stream": False,
             },
             timeout=TIMEOUT_SECONDS,

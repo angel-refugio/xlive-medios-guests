@@ -90,11 +90,12 @@ def reject_guest_candidate(candidate_id: int, db: Session = Depends(get_db)):
 @router.get("/contact-candidates", response_model=ContactCandidatePage)
 def list_contact_candidates(
     status: CandidateStatus | None = "pending",
+    doubtful: bool | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(service.DEFAULT_PAGE_SIZE, ge=1, le=service.MAX_PAGE_SIZE),
     db: Session = Depends(get_db),
 ):
-    items, total = service.list_contact_candidates(db, status or "", page, page_size)
+    items, total = service.list_contact_candidates(db, status or "", page, page_size, doubtful)
     return ContactCandidatePage(items=items, total=total, page=page, page_size=page_size)
 
 

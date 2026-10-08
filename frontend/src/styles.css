@@ -1,17 +1,22 @@
 :root {
-  /* Paleta: blanco y azul, con negro en la barra superior y el texto. */
-  --bg: #f2f6ff;
-  --surface: #fff;
-  --text: #0b1220;
-  --muted: #5a6882;
-  --border: #d3ddf0;
-  --primary: #1d4ed8;
-  --primary-dark: #1e3a8a;
-  --primary-soft: #e6eeff;
-  --nav-bg: #0b1220;
-  --nav-text: #c9d5ee;
+  /* Paleta oscura: fondos azul noche, texto claro y acentos azules. */
+  color-scheme: dark;
+  --bg: #0b1020;
+  --surface: #141b2e;
+  --surface-2: #1b2440;
+  --text: #e6ecfa;
+  --muted: #93a1bf;
+  --border: #2a3556;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-soft: #1a2a52;
+  --nav-bg: #060a14;
+  --nav-text: #b9c6e4;
   --accent: #60a5fa;
-  --danger: #b3261e;
+  --link: #7db3ff;
+  --danger: #f87171;
+  --warn: #fbbf24;
+  --warn-soft: #2d2410;
 }
 
 * {
@@ -96,14 +101,22 @@ textarea {
   padding: 0.5rem;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
   font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
 }
 
 button {
   padding: 0.5rem 1rem;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--surface-2);
+  color: var(--text);
   font: inherit;
   cursor: pointer;
 }
@@ -310,6 +323,7 @@ button.danger {
   padding: 0.15rem 0.6rem;
   border: 1px solid var(--primary);
   border-radius: 999px;
+  background: var(--primary-soft);
 }
 
 .chips button {
@@ -493,10 +507,56 @@ button.danger {
 .badge.warn {
   display: inline-block;
   padding: 0.15rem 0.6rem;
-  border: 1px solid #c77d00;
+  border: 1px solid var(--warn);
   border-radius: 999px;
-  color: #8a5600;
+  background: var(--warn-soft);
+  color: var(--warn);
   font-size: 0.85rem;
+}
+
+.badge.info {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.55rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
+.contact-list {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.contact-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.contact-list .badge {
+  margin-left: 0;
+}
+
+blockquote.evidence {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+  padding: 0.2rem 0.7rem;
+  border-left: 3px solid var(--primary);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
 }
 
 .review button.primary {
@@ -512,7 +572,7 @@ button.danger {
 }
 
 .warn-text {
-  color: #8a5600;
+  color: var(--warn);
 }
 
 .hosts-field,
@@ -525,7 +585,7 @@ button.danger {
 
 /* Colores de marca: barra negra con azul, contenido blanco, acentos azules */
 a {
-  color: var(--primary);
+  color: var(--link);
 }
 
 .topbar {
@@ -565,8 +625,8 @@ a {
 }
 
 button:hover:not(:disabled) {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 button[type="submit"]:hover:not(:disabled),
@@ -642,6 +702,6 @@ a:focus-visible {
 button.quick {
   padding: 0.25rem 0.7rem;
   border-color: var(--primary);
-  color: var(--primary);
+  color: var(--accent);
   background: var(--surface);
 }

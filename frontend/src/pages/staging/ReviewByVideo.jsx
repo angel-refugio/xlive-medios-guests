@@ -10,6 +10,7 @@ import { confidencePercent } from "./labels.js";
 const FILTERS = [
   { key: "pending", label: "Pendientes", empty: "No hay videos con invitados candidatos por revisar." },
   { key: "with_contacts", label: "Con contactos", empty: "No hay videos con contactos candidatos por revisar." },
+  { key: "doubtful_contacts", label: "Contactos dudosos", empty: "No hay videos con contactos dudosos por revisar." },
   { key: "no_candidates", label: "Sin candidatos", empty: "No hay videos sin candidatos." },
   { key: "no_guests", label: "Sin invitados", empty: 'No hay videos marcados "sin invitados".' },
   { key: "duplicates", label: "Posibles duplicados", empty: "No hay posibles duplicados." },
@@ -253,11 +254,29 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
           <p className="muted">Sin descripción.</p>
         )}
         {video.contact_candidates.length > 0 && (
-          <p className="muted">
-            {video.contact_candidates.length === 1 ? "1 contacto candidato" : `${video.contact_candidates.length} contactos candidatos`}:{" "}
-            {video.contact_candidates.map((c) => c.value).join(", ")} ·{" "}
-            <Link to="/staging/contact-candidates">Revisar contactos</Link>
-          </p>
+          <div className="video-contacts">
+            <p className="muted">
+              {video.contact_candidates.length === 1 ? "1 contacto candidato" : `${video.contact_candidates.length} contactos candidatos`} ·{" "}
+              <Link to="/staging/contact-candidates">Revisar contactos</Link>
+            </p>
+            <ul className="contact-list" aria-label="Contactos candidatos">
+              {video.contact_candidates.map((c) => (
+                <li key={c.id}>
+                  <span>
+                    <strong>{c.type_hint}:</strong> {c.value}
+                  </span>
+                  {c.relationship_name && <span className="badge info">{c.relationship_name}</span>}
+                  {c.doubtful && (
+                    <span className="badge warn" title={c.doubtful_reason || undefined}>
+                      Dudoso{c.doubtful_reason ? `: ${c.doubtful_reason}` : ""}
+                    </span>
+                  )}
+                  {c.guest_name && <small className="muted">asignado a {c.guest_name}</small>}
+                  {c.evidence && <blockquote className="evidence">{c.evidence}</blockquote>}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </div>
 

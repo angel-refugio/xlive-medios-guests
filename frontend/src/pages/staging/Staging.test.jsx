@@ -52,6 +52,19 @@ const contactCandidate1 = {
   created_at: "2024-01-01T00:00:00Z",
 };
 
+// Contacto que la IA propone con relación y evidencia, pero de un tipo que el catálogo no tiene.
+const dubiousContact = {
+  ...contactCandidate1,
+  id: 22,
+  type_hint: "Contacto",
+  value: "karim@mail.com",
+  relationship_name: "manager",
+  evidence: "Contrataciones: karim@mail.com",
+  doubtful: true,
+  doubtful_reason: "tipo no registrado",
+  guest_name: "Karimm Kury",
+};
+
 const noGuestsVideo = {
   ...video1,
   id: 2,
@@ -240,6 +253,38 @@ describe("Revisión por video", () => {
     expect(within(card).getByText(/Posible duplicado del video/)).toBeInTheDocument();
     expect(within(card).getByText(/1 contacto candidato/)).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "Revisar contactos" })).toHaveAttribute("href", "/staging/contact-candidates");
+  });
+
+  it("la tarjeta muestra relación, evidencia y el motivo de un contacto dudoso", async () => {
+    createFakeBackend({
+      videos: [video1],
+      guestCandidates: [guestCandidate1],
+      contactCandidates: [dubiousContact],
+    });
+    renderApp("/staging/review");
+    const card = await screen.findByRole("article", { name: "con Karimm Kury" });
+    const list = within(within(card).getByRole("list", { name: "Contactos candidatos" }));
+    expect(list.getByText("manager")).toBeInTheDocument();
+    expect(list.getByText(/Dudoso: tipo no registrado/)).toBeInTheDocument();
+    expect(list.getByText("karim@mail.com")).toBeInTheDocument();
+    expect(list.getByText("Contrataciones: karim@mail.com")).toBeInTheDocument();
+  });
+
+  it("el filtro Contactos dudosos cuenta y lista solo los videos con un contacto dudoso", async () => {
+    createFakeBackend({
+      videos: [video1, { ...noGuestsVideo, id: 3 }],
+      guestCandidates: [guestCandidate1],
+      contactCandidates: [dubiousContact, { ...contactCandidate1, id: 21, video_id: 3 }],
+    });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const filters = within(await screen.findByRole("group", { name: "Filtros de revisión" }));
+    expect(await filters.findByRole("button", { name: /^Contactos dudosos/ })).toHaveTextContent("1");
+    expect(filters.getByRole("button", { name: /^Con contactos/ })).toHaveTextContent("2");
+
+    await user.click(filters.getByRole("button", { name: /^Contactos dudosos/ }));
+    expect(await screen.findByRole("article", { name: "con Karimm Kury" })).toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "Resumen semanal" })).not.toBeInTheDocument();
   });
 
   it("un error de la API se muestra en la tarjeta y no la quita", async () => {
@@ -472,6 +517,43 @@ describe("Cola de contactos candidatos", () => {
     expect(body).toMatchObject({ guest_id: 5, value: "@karimmkury" });
     expect(db.contacts).toHaveLength(1);
     expect(db.contacts[0].source).toBe("video_description");
+  });
+
+  it("muestra relación, motivo y evidencia, y propone la relación de la IA al aceptar", async () => {
+    const { fetchMock } = createFakeBackend({
+      videos: [video1],
+      contactCandidates: [dubiousContact],
+      guests: [{ id: 5, full_name: "Karimm Kury", categories: [], borough: null }],
+    });
+    const user = userEvent.setup();
+    renderApp("/staging/contact-candidates");
+    expect(await screen.findByText(/Dudoso: tipo no registrado/)).toBeInTheDocument();
+    expect(screen.getByText("Contrataciones: karim@mail.com")).toBeInTheDocument();
+    expect(screen.getByText(/La IA lo asignó a: Karimm Kury/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Revisar" }));
+    await screen.findByRole("option", { name: "Karimm Kury" });
+    // La relación llega preseleccionada con lo que propuso la IA; el invitado no.
+    expect(screen.getByLabelText("Relación con el invitado")).toHaveValue("2");
+    expect(screen.getByLabelText("Invitado")).toHaveValue("");
+    await user.selectOptions(screen.getByLabelText("Invitado"), "Karimm Kury");
+    await user.selectOptions(screen.getByLabelText("Tipo de contacto"), "Correo");
+    await user.click(screen.getByRole("button", { name: "Aceptar contacto" }));
+
+    await waitFor(() => expect(screen.getByText(/No hay candidatos en estado/)).toBeInTheDocument());
+    const body = JSON.parse(callsTo(fetchMock, "POST", "/staging/contact-candidates/22/accept")[0][1].body);
+    expect(body).toMatchObject({ guest_id: 5, relationship_id: 2 });
+  });
+
+  it("el filtro Solo contactos dudosos oculta los que no lo son", async () => {
+    createFakeBackend({ videos: [video1], contactCandidates: [contactCandidate1, dubiousContact] });
+    const user = userEvent.setup();
+    renderApp("/staging/contact-candidates");
+    expect(await screen.findByText("@karimmkury")).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText("Solo contactos dudosos"));
+    await waitFor(() => expect(screen.queryByText("@karimmkury")).not.toBeInTheDocument());
+    expect(screen.getByText("karim@mail.com")).toBeInTheDocument();
   });
 
   it("exige elegir invitado y tipo antes de aceptar", async () => {

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.catalogs import ContactRelationship
 from app.models.contact import Contact
 from app.models.guest import Guest
 from app.models.ingestion import StagingContactCandidate, StagingGuestCandidate
@@ -153,11 +154,15 @@ def reject_guest_candidate(db: Session, candidate_id: int) -> StagingGuestCandid
 # --- Contactos candidatos ------------------------------------------------------
 
 def list_contact_candidates(
-    db: Session, status: str = "pending", page: int = 1, page_size: int = DEFAULT_PAGE_SIZE
+    db: Session, status: str = "pending", page: int = 1, page_size: int = DEFAULT_PAGE_SIZE,
+    doubtful: bool | None = None,
 ) -> tuple[list[StagingContactCandidate], int]:
+    """`doubtful=True` deja solo los contactos dudosos; `False`, solo los no dudosos."""
     page = max(page, 1)
     page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
     filters = [StagingContactCandidate.status == status] if status else []
+    if doubtful is not None:
+        filters.append(StagingContactCandidate.doubtful.is_(doubtful))
     total = db.execute(
         select(func.count(StagingContactCandidate.id)).where(*filters)
     ).scalar_one()
@@ -191,6 +196,10 @@ def accept_contact_candidate(
     """
     candidate = get_contact_candidate(db, candidate_id)
     _ensure_pending(candidate, "contacto")
+    if data.relationship_id is not None and db.get(ContactRelationship, data.relationship_id) is None:
+        msg = f"La relación de contacto {data.relationship_id} no existe"
+        logger.warning("[app.services.staging.accept_contact_candidate] %s", msg)
+        raise guests_service.InvalidReferenceError(msg)
 
     contact = contacts_service.create_contact(db, data.guest_id, ContactCreate(
         contact_type_id=data.contact_type_id,
@@ -199,6 +208,10 @@ def accept_contact_candidate(
         source="video_description",
         verified=False,
     ))
+    # El origen del contacto viaja con él: relación que eligió el humano, video y evidencia.
+    contact.relationship_id = data.relationship_id
+    contact.video_id = candidate.video_id
+    contact.evidence = candidate.evidence
 
     candidate.status = "accepted"
     candidate.linked_contact_id = contact.id

@@ -43,6 +43,11 @@ export function createFakeBackend({
         { id: 1, name: "Celular", is_active: true },
         { id: 2, name: "Correo", is_active: true },
       ],
+      "contact-relationships": [
+        { id: 1, name: "propio", is_active: true },
+        { id: 2, name: "manager", is_active: true },
+        { id: 3, name: "patrocinador", is_active: true },
+      ],
       "video-types": [
         { id: 1, name: "Entrevista", is_active: true },
         { id: 2, name: "Evento", is_active: true },
@@ -131,7 +136,7 @@ export function createFakeBackend({
     if (pathname === "/auth/me") return fakeResponse(200, { username: "admin", role: "administrador" });
 
     if (
-      (m = pathname.match(/^\/(boroughs|guest-categories|contact-types|video-types|programs|hosts)$/)) &&
+      (m = pathname.match(/^\/(boroughs|guest-categories|contact-types|contact-relationships|video-types|programs|hosts)$/)) &&
       method === "GET"
     ) {
       return fakeResponse(200, db.catalogs[m[1]].filter((i) => i.is_active));
@@ -328,7 +333,10 @@ export function createFakeBackend({
 
     if (pathname === "/staging/contact-candidates" && method === "GET") {
       const status = params.get("status") || "pending";
-      const list = db.contactCandidates.filter((c) => c.status === status);
+      const doubtful = params.get("doubtful");
+      const list = db.contactCandidates
+        .filter((c) => c.status === status)
+        .filter((c) => doubtful === null || Boolean(c.doubtful) === (doubtful === "true"));
       const page = pageOf(list, params);
       return fakeResponse(200, { ...page, items: page.items.map(contactCandidateOut) });
     }
@@ -351,6 +359,7 @@ export function createFakeBackend({
         note: body.note ?? null,
         source: "video_description",
         verified: false,
+        relationship: catalogItem("contact-relationships", body.relationship_id),
       };
       db.contacts.push(contact);
       candidate.status = "accepted";
@@ -375,6 +384,7 @@ export function createFakeBackend({
     const reviewFilters = {
       pending: (v) => pendingGuests(v.id).length > 0 || Boolean(pendingSuggestion(v.id)),
       with_contacts: (v) => pendingContacts(v.id).length > 0,
+      doubtful_contacts: (v) => pendingContacts(v.id).some((c) => c.doubtful),
       no_candidates: (v) =>
         pendingGuests(v.id).length === 0 && pendingContacts(v.id).length === 0 && !pendingSuggestion(v.id) && v.guest_status === "pending",
       no_guests: (v) => v.guest_status === "no_guests",

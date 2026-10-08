@@ -2,7 +2,8 @@
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.catalogs import ContactType
+from app.models.catalogs import ContactRelationship, ContactType
+from app.models.contact import Contact
 from app.models.guest import Guest
 from app.models.ingestion import StagingContactCandidate, StagingGuestCandidate
 from app.models.video import Video
@@ -120,6 +121,57 @@ def test_accept_contact_candidate(api_client, api_engine):
     assert resp.json()["value"] == "@karimmkury"
     assert resp.json()["source"] == "video_description"
     assert resp.json()["verified"] is False
+
+
+def test_accept_contact_candidate_guarda_relacion_video_y_evidencia(api_client, api_engine):
+    guest_id, type_id, candidate_id = _seed_contact_candidate(api_engine)
+    with Session(api_engine) as s:
+        relation = ContactRelationship(name="manager")
+        candidate = s.get(StagingContactCandidate, candidate_id)
+        candidate.evidence = "Contrataciones: @karimmkury"
+        s.add(relation)
+        s.commit()
+        relation_id, video_id = relation.id, candidate.video_id
+
+    resp = api_client.post(
+        f"/staging/contact-candidates/{candidate_id}/accept",
+        json={"guest_id": guest_id, "contact_type_id": type_id, "relationship_id": relation_id},
+    )
+    assert resp.status_code == 200
+    with Session(api_engine) as s:
+        contact = s.get(Contact, resp.json()["id"])
+        assert contact.relationship_id == relation_id
+        assert contact.video_id == video_id
+        assert contact.evidence == "Contrataciones: @karimmkury"
+
+
+def test_accept_contact_candidate_con_relacion_inexistente_da_error_y_no_cierra_el_candidato(
+    api_client, api_engine,
+):
+    guest_id, type_id, candidate_id = _seed_contact_candidate(api_engine)
+    resp = api_client.post(
+        f"/staging/contact-candidates/{candidate_id}/accept",
+        json={"guest_id": guest_id, "contact_type_id": type_id, "relationship_id": 9999},
+    )
+    assert resp.status_code in (404, 409, 422)
+    assert api_client.get(f"/staging/contact-candidates/{candidate_id}").json()["status"] == "pending"
+
+
+def test_list_contact_candidates_filtra_por_dudoso_y_expone_el_detalle(api_client, api_engine):
+    _, _, candidate_id = _seed_contact_candidate(api_engine)
+    assert api_client.get("/staging/contact-candidates", params={"doubtful": "true"}).json()["total"] == 0
+    with Session(api_engine) as s:
+        candidate = s.get(StagingContactCandidate, candidate_id)
+        candidate.doubtful, candidate.doubtful_reason = True, "tipo no registrado"
+        candidate.relationship_name, candidate.guest_name = "patrocinador", "Karimm Kury"
+        s.commit()
+
+    body = api_client.get("/staging/contact-candidates", params={"doubtful": "true"}).json()
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["doubtful"] is True and item["doubtful_reason"] == "tipo no registrado"
+    assert (item["relationship_name"], item["guest_name"]) == ("patrocinador", "Karimm Kury")
+    assert api_client.get("/staging/contact-candidates", params={"doubtful": "false"}).json()["total"] == 0
 
 
 def test_videos_filtra_por_guest_status(api_client, api_engine):

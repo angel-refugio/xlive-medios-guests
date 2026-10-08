@@ -90,6 +90,13 @@ class ContactCandidateOut(BaseModel):
     value: str
     raw_confidence: float
     extraction_method: str
+    # Lo que propone la IA; el humano decide al aceptar (el invitado nunca se infiere solo).
+    relationship_name: str | None = None
+    evidence: str | None = None
+    doubtful: bool = False
+    doubtful_reason: str | None = None
+    guest_name: str | None = None
+    possible_guest_name: str | None = None
     status: CandidateStatus
     linked_contact_id: int | None
     reviewed_at: datetime | None
@@ -110,6 +117,8 @@ class ContactCandidateAccept(BaseModel):
     contact_type_id: int
     value: str | None = None
     note: str | None = Field(default=None, max_length=500)
+    # Propio / mánager / patrocinador (catálogo `contact_relationships`); opcional.
+    relationship_id: int | None = None
 
     _clean_value = field_validator("value")(_clean_value)
     _clean_note = field_validator("note")(_clean_optional_text)
@@ -117,7 +126,9 @@ class ContactCandidateAccept(BaseModel):
 
 # --- Revisión por video (Staging Review rediseñado) ----------------------------
 
-ReviewFilter = Literal["pending", "with_contacts", "no_candidates", "no_guests", "duplicates"]
+ReviewFilter = Literal[
+    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "duplicates",
+]
 
 
 class ReviewGuestCandidate(BaseModel):
@@ -142,6 +153,12 @@ class ReviewContactCandidate(BaseModel):
     id: int
     type_hint: str
     value: str
+    relationship_name: str | None = None
+    evidence: str | None = None
+    doubtful: bool = False
+    doubtful_reason: str | None = None
+    guest_name: str | None = None
+    possible_guest_name: str | None = None
 
 
 class ReviewDoubtful(BaseModel):
@@ -185,6 +202,7 @@ class ReviewCounts(BaseModel):
 
     pending: int
     with_contacts: int
+    doubtful_contacts: int
     no_candidates: int
     no_guests: int
     duplicates: int

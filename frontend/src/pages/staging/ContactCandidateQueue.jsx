@@ -3,30 +3,34 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client.js";
 import Pager from "../../components/Pager.jsx";
 import { useCatalog } from "../../hooks/useCatalog.js";
-import { CANDIDATE_STATUS_LABELS, EXTRACTION_METHOD_LABELS, confidencePercent } from "./labels.js";
+import { CANDIDATE_STATUS_LABELS, EXTRACTION_METHOD_LABELS, confidencePercent, matchRelationshipId } from "./labels.js";
 
 // Cola de contactos candidatos. El invitado al que se atribuyen siempre lo elige quien revisa.
 export default function ContactCandidateQueue() {
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get("page")) || 1);
   const status = params.get("status") || "pending";
+  const onlyDoubtful = params.get("doubtful") === "true";
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [guests, setGuests] = useState([]);
   const contactTypes = useCatalog("contact-types");
+  const relationships = useCatalog("contact-relationships");
 
   const load = useCallback(() => {
     setData(null);
     setError("");
+    const query = { page, status };
+    if (onlyDoubtful) query.doubtful = true;
     return api
-      .get("/staging/contact-candidates", { page, status })
+      .get("/staging/contact-candidates", query)
       .then(setData)
       .catch((err) => {
         console.error("[pages.staging.ContactCandidateQueue.load] No se pudo cargar la cola:", err);
         setError(err.message);
       });
-  }, [page, status]);
+  }, [page, status, onlyDoubtful]);
 
   useEffect(() => {
     load();
@@ -41,8 +45,9 @@ export default function ContactCandidateQueue() {
   }, []);
 
   const update = (next) => {
-    const merged = { page: String(page), status, ...next };
+    const merged = { page: String(page), status, doubtful: onlyDoubtful, ...next };
     const clean = { status: merged.status };
+    if (merged.doubtful) clean.doubtful = "true";
     if (Number(merged.page) > 1) clean.page = String(merged.page);
     setParams(clean);
   };
@@ -64,6 +69,14 @@ export default function ContactCandidateQueue() {
           ))}
         </select>
       </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={onlyDoubtful}
+          onChange={(e) => update({ doubtful: e.target.checked, page: 1 })}
+        />
+        Solo contactos dudosos
+      </label>
 
       {error && (
         <p role="alert" className="error">
@@ -82,10 +95,27 @@ export default function ContactCandidateQueue() {
                 · {EXTRACTION_METHOD_LABELS[candidate.extraction_method] || candidate.extraction_method} ·{" "}
                 confianza {confidencePercent(candidate.raw_confidence)}
               </span>
+              {candidate.relationship_name && <span className="badge info">{candidate.relationship_name}</span>}
+              {candidate.doubtful && (
+                <span className="badge warn" title={candidate.doubtful_reason || undefined}>
+                  Dudoso{candidate.doubtful_reason ? `: ${candidate.doubtful_reason}` : ""}
+                </span>
+              )}
               <br />
               <small className="muted">
                 En video: <Link to={`/videos/${candidate.video.id}`}>{candidate.video.title}</Link>
               </small>
+              {(candidate.guest_name || candidate.possible_guest_name) && (
+                <>
+                  <br />
+                  <small className="muted">
+                    {candidate.guest_name && `La IA lo asignó a: ${candidate.guest_name}`}
+                    {candidate.guest_name && candidate.possible_guest_name && " · "}
+                    {candidate.possible_guest_name && `Posible invitado no detectado: ${candidate.possible_guest_name}`}
+                  </small>
+                </>
+              )}
+              {candidate.evidence && <blockquote className="evidence">{candidate.evidence}</blockquote>}
             </div>
             {status === "pending" && (
               <div className="item-actions">
@@ -102,6 +132,7 @@ export default function ContactCandidateQueue() {
                 candidate={candidate}
                 guests={guests}
                 contactTypes={contactTypes.items}
+                relationships={relationships.items}
                 onDone={afterReview}
                 onCancel={() => setExpandedId(null)}
               />
@@ -117,10 +148,12 @@ export default function ContactCandidateQueue() {
   );
 }
 
-function ContactCandidateReview({ candidate, guests, contactTypes, onDone, onCancel }) {
+function ContactCandidateReview({ candidate, guests, contactTypes, relationships, onDone, onCancel }) {
   const base = `/staging/contact-candidates/${candidate.id}`;
   const [guestId, setGuestId] = useState("");
   const [contactTypeId, setContactTypeId] = useState("");
+  // La relación solo se preselecciona con lo que propuso la IA; quien revisa la confirma o cambia.
+  const [relationshipId, setRelationshipId] = useState(() => matchRelationshipId(relationships, candidate.relationship_name));
   const [value, setValue] = useState(candidate.value);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -148,6 +181,7 @@ function ContactCandidateReview({ candidate, guests, contactTypes, onDone, onCan
         contact_type_id: Number(contactTypeId),
         value: value.trim(),
         note: note.trim() || null,
+        relationship_id: relationshipId ? Number(relationshipId) : null,
       });
       await onDone();
     } catch (err) {
@@ -188,6 +222,17 @@ function ContactCandidateReview({ candidate, guests, contactTypes, onDone, onCan
           {contactTypes.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Relación con el invitado
+        <select value={relationshipId} onChange={(e) => setRelationshipId(e.target.value)}>
+          <option value="">— Sin especificar —</option>
+          {relationships.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}
             </option>
           ))}
         </select>

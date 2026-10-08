@@ -74,8 +74,11 @@ def test_lists_ingested_videos_with_pending_candidates_by_confidence(api_client,
     video = body["items"][0]
     assert video["title"] == "Con candidatos"
     assert [g["extracted_name"] for g in video["guest_candidates"]] == ["Alta", "Baja"]
-    assert video["contact_candidates"] == [{"id": video["contact_candidates"][0]["id"],
-                                            "type_hint": "instagram", "value": "@alta"}]
+    assert video["contact_candidates"] == [{
+        "id": video["contact_candidates"][0]["id"], "type_hint": "instagram", "value": "@alta",
+        "relationship_name": None, "evidence": None, "doubtful": False, "doubtful_reason": None,
+        "guest_name": None, "possible_guest_name": None,
+    }]
     assert {"adjusted_confidence", "evidence", "is_possible_group"} <= set(video["guest_candidates"][0])
 
 
@@ -87,8 +90,39 @@ def test_counts_per_filter(api_client, api_engine):
     _seed_video(api_engine, "v5", "Duplicado", duplicate_of=original, guests=[("Ana", 0.5)])
 
     assert api_client.get("/staging/review/counts").json() == {
-        "pending": 2, "with_contacts": 1, "no_candidates": 1, "no_guests": 1, "duplicates": 1,
+        "pending": 2, "with_contacts": 1, "doubtful_contacts": 0, "no_candidates": 1,
+        "no_guests": 1, "duplicates": 1,
     }
+
+
+def _mark_contacts(engine, video_id, **fields) -> None:
+    with Session(engine) as s:
+        for contact in s.scalars(select(StagingContactCandidate).where(
+                StagingContactCandidate.video_id == video_id)):
+            for name, value in fields.items():
+                setattr(contact, name, value)
+        s.commit()
+
+
+def test_doubtful_contacts_filter_counts_and_lists_only_pending_doubtful(api_client, api_engine):
+    dudoso, _ = _seed_video(api_engine, "v1", "Dudoso", contacts=[("contacto", "a@b.com")])
+    _seed_video(api_engine, "v2", "Normal", contacts=[("correo", "c@d.com")])
+    cerrado, _ = _seed_video(api_engine, "v3", "Dudoso ya revisado", contacts=[("correo", "e@f.com")])
+    _mark_contacts(api_engine, dudoso, doubtful=True, doubtful_reason="tipo no registrado",
+                   relationship_name="manager", evidence="Contrataciones: a@b.com",
+                   guest_name="Ana", possible_guest_name="Luis")
+    _mark_contacts(api_engine, cerrado, doubtful=True, status="rejected")
+
+    counts = api_client.get("/staging/review/counts").json()
+    assert counts["doubtful_contacts"] == 1 and counts["with_contacts"] == 2
+
+    body = api_client.get("/staging/review/videos", params={"filter": "doubtful_contacts"}).json()
+    assert [v["title"] for v in body["items"]] == ["Dudoso"]
+    contact = body["items"][0]["contact_candidates"][0]
+    assert contact["doubtful"] is True and contact["doubtful_reason"] == "tipo no registrado"
+    assert contact["relationship_name"] == "manager"
+    assert contact["evidence"] == "Contrataciones: a@b.com"
+    assert (contact["guest_name"], contact["possible_guest_name"]) == ("Ana", "Luis")
 
 
 def test_each_filter_returns_its_videos(api_client, api_engine):

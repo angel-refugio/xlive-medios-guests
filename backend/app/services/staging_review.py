@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
-REVIEW_FILTERS = ("pending", "with_contacts", "no_candidates", "no_guests", "duplicates")
+REVIEW_FILTERS = (
+    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "duplicates",
+)
 
 
 class ReviewInputError(ValueError):
@@ -65,6 +67,12 @@ def _filter_clause(review_filter: str):
         return or_(_pending_guest_exists(), _pending_suggestion_exists())
     if review_filter == "with_contacts":
         return _pending_contact_exists()
+    if review_filter == "doubtful_contacts":
+        return exists().where(
+            StagingContactCandidate.video_id == Video.id,
+            StagingContactCandidate.status == "pending",
+            StagingContactCandidate.doubtful.is_(True),
+        )
     if review_filter == "no_candidates":
         return (
             ~_pending_guest_exists() & ~_pending_contact_exists() & ~_pending_suggestion_exists()

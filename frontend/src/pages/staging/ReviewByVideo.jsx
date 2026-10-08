@@ -13,8 +13,6 @@ const FILTERS = [
   { key: "doubtful_contacts", label: "Contactos dudosos", empty: "No hay videos con contactos dudosos por revisar." },
   { key: "no_candidates", label: "Sin candidatos", empty: "No hay videos sin candidatos." },
   { key: "no_guests", label: "Sin invitados", empty: 'No hay videos marcados "sin invitados".' },
-  // Las copias (la versión con 📱 de un par) salen de las demás listas; aquí se pueden consultar.
-  { key: "duplicates", label: "Copias duplicadas", empty: "No hay copias duplicadas." },
 ];
 
 const cleanName = (text) => text.trim().replace(/\s+/g, " ");
@@ -241,11 +239,6 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
           </a>{" "}
           · {dateOnly(video.published_at) || "sin fecha"} · <Link to={`/videos/${video.id}`}>Abrir video</Link>
         </p>
-        {video.is_duplicate_copy && video.possible_duplicate_of_video_id && (
-          <p className="badge warn">
-            Copia del video <Link to={`/videos/${video.possible_duplicate_of_video_id}`}>#{video.possible_duplicate_of_video_id}</Link>
-          </p>
-        )}
         {video.description ? (
           <details>
             <summary>Descripción</summary>

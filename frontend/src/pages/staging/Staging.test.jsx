@@ -247,23 +247,14 @@ describe("Revisión por video", () => {
   const copia = { ...video1, id: 2, youtube_video_id: "xyz", title: "Con las Estrellas 📱", possible_duplicate_of_video_id: 1 };
   const guestOfCopy = { ...guestCandidate1, id: 11, video_id: 2 };
 
-  it("la copia con 📱 sale de la cola y el original no lleva aviso de duplicado", async () => {
+  it("la copia con 📱 se ignora por completo: no hay tarjeta, ni contador, ni filtro de copias", async () => {
     createFakeBackend({ videos: [original, copia], guestCandidates: [guestCandidate1, guestOfCopy] });
     renderApp("/staging/review");
-    const card = await screen.findByRole("article", { name: "Con las Estrellas" });
+    await screen.findByRole("article", { name: "Con las Estrellas" });
     expect(screen.queryByRole("article", { name: "Con las Estrellas 📱" })).not.toBeInTheDocument();
-    expect(within(card).queryByText(/Copia del video/)).not.toBeInTheDocument();
     const filters = within(screen.getByRole("group", { name: "Filtros de revisión" }));
     expect(await filters.findByRole("button", { name: /^Pendientes/ })).toHaveTextContent("1");
-    expect(filters.getByRole("button", { name: /^Copias duplicadas/ })).toHaveTextContent("1");
-  });
-
-  it("el filtro Copias duplicadas muestra la copia con su aviso", async () => {
-    createFakeBackend({ videos: [original, copia], guestCandidates: [guestCandidate1, guestOfCopy] });
-    renderApp("/staging/review?filter=duplicates");
-    const card = await screen.findByRole("article", { name: "Con las Estrellas 📱" });
-    expect(within(card).getByText(/Copia del video/)).toBeInTheDocument();
-    expect(screen.queryByRole("article", { name: "Con las Estrellas" })).not.toBeInTheDocument();
+    expect(filters.queryByRole("button", { name: /duplicad/i })).not.toBeInTheDocument();
   });
 
   it("muestra los contactos candidatos del video", async () => {

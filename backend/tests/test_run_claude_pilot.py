@@ -101,6 +101,57 @@ def test_run_guarda_lotes_y_predicciones_para_la_evaluacion(tmp_path, capsys):
     assert "5512345678" not in out                            # los contactos no se imprimen
 
 
+def _db_videos(session):
+    from app.models.video import Video
+    session.add_all([
+        Video(youtube_video_id="a1", title="Ya en el piloto", source="youtube"),
+        Video(youtube_video_id="n1", title="Nuevo: Uno", description="d", source="youtube"),
+        Video(youtube_video_id="n2", title="Nuevo: Dos", source="youtube"),
+        Video(youtube_video_id="m1", title="Creado a mano", source="manual"),
+    ])
+    session.commit()
+
+
+def _piloto_con_a1(tmp_path):
+    pilot_dir = tmp_path / "pilot_v3"
+    pilot_dir.mkdir()
+    (pilot_dir / "batch_0001_x.json").write_text(json.dumps({"video_ids": ["a1"]}), encoding="utf-8")
+
+
+def test_load_db_videos_omite_los_del_piloto_y_los_que_no_son_de_youtube(tmp_path, session):
+    _db_videos(session)
+    _piloto_con_a1(tmp_path)
+    videos = pilot.load_db_videos(session, tmp_path / "pilot_v3")
+    assert list(videos) == ["n1", "n2"]
+    assert videos["n1"] == {"title": "Nuevo: Uno", "description": "d", "published_at": None}
+    assert videos["n2"]["description"] == ""
+
+
+def test_from_db_procesa_solo_los_nuevos_y_guarda_aparte_sin_cache_de_evaluacion(tmp_path, session, monkeypatch, capsys):
+    _db_videos(session)
+    _piloto_con_a1(tmp_path)
+    monkeypatch.setattr(pilot, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(pilot, "make_engine", lambda: None)
+    monkeypatch.setattr(pilot, "make_session_factory", lambda engine: (lambda: session))
+    args = _args(tmp_path, "--from-db")
+    runner = FakeClaude()
+    assert pilot.run(args, runner) == 0
+    saved = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "pilot").glob("batch_*.json")]
+    assert sorted(i for s in saved for i in s["video_ids"]) == ["n1", "n2"]
+    assert not (tmp_path / "eval").exists()                   # sin referencia no se escribe el caché
+    assert "import_claude_results" in capsys.readouterr().out
+
+
+def test_from_db_sin_videos_nuevos_avisa_y_no_llama_a_claude(tmp_path, session, monkeypatch, capsys):
+    monkeypatch.setattr(pilot, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(pilot, "make_engine", lambda: None)
+    monkeypatch.setattr(pilot, "make_session_factory", lambda engine: (lambda: session))
+    runner = FakeClaude()
+    assert pilot.run(_args(tmp_path, "--from-db"), runner) == 0
+    assert runner.calls == 0
+    assert "No hay videos en la BD sin analizar" in capsys.readouterr().out
+
+
 def test_lotes_antiguos_sin_modelo_se_resumen_como_no_registrado(tmp_path, capsys):
     pilot.run(_args(tmp_path), FakeClaude())
     for path in (tmp_path / "pilot").glob("batch_*.json"):

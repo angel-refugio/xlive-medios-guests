@@ -33,6 +33,10 @@ import tempfile
 import time
 from pathlib import Path
 
+from sqlalchemy import select
+
+from app.db.session import make_engine, make_session_factory
+from app.models.video import Video
 from app.services import claude_extraction, contact_candidates, contact_filters, extraction_eval
 from app.services.claude_extraction import ClaudeExtractionError, Usage
 
@@ -121,8 +125,27 @@ def saved_batches(out_dir: Path) -> set[tuple[str, ...]]:
     return saved
 
 
-def default_out_dir(version: str) -> Path:
+def default_out_dir(version: str, from_db: bool = False) -> Path:
+    if from_db:
+        return DATA_DIR / f"pilot_{version}_db"
     return DEFAULT_OUT_DIR if version == "v1" else DATA_DIR / f"pilot_{version}"
+
+
+def load_db_videos(db, analyzed_dir: Path) -> dict[str, dict]:
+    """Videos de la BD que aún no pasaron por Claude: {id de YouTube: {title, description, published_at}}.
+
+    "Ya pasaron" = aparecen en algún lote guardado de `analyzed_dir` (la carpeta del piloto); así un
+    video del piloto que no dejó sugerencias ni candidatos no se vuelve a procesar.
+    """
+    analyzed = {video_id for batch in saved_batches(analyzed_dir) for video_id in batch}
+    rows = db.execute(select(Video).where(Video.source == "youtube").order_by(Video.id)).scalars()
+    return {
+        v.youtube_video_id: {
+            "title": v.title, "description": v.description or "",
+            "published_at": v.published_at.isoformat() if v.published_at else None,
+        }
+        for v in rows if v.youtube_video_id not in analyzed
+    }
 
 
 def eval_cache_path(eval_dir: Path, model: str, version: str = "v1") -> Path:
@@ -263,6 +286,9 @@ def print_summary(args: argparse.Namespace, total: Usage, videos_done: int, cont
             net_in = max(total.total_input_tokens - overhead.total_input_tokens * total.calls, 0)
             net = (net_in * args.price_in + total.output_tokens * args.price_out) / 1_000_000
             print(f"Sin los tokens fijos de Claude Code: {net:.4f} USD = {net / videos_done * 1000:.2f} USD por 1,000 videos")
+    if getattr(args, "from_db", False):
+        print(f"Para llevarlos a Staging Review: python -m scripts.import_claude_results {args.out_dir}")
+        return
     extractor = "claude_code" if args.instructions == "v1" else f"claude_code_{args.instructions}"
     print(f"Mide la calidad con: python -m scripts.eval_extraction --extractor {extractor} --model {args.model}")
 
@@ -273,15 +299,24 @@ def run(args: argparse.Namespace, runner=subprocess.run) -> int:
             usage = measure_overhead(args, runner)
             print(f"Tokens fijos por llamada: entrada {usage.total_input_tokens:,}, salida {usage.output_tokens:,}")
             return 0
+        from_db = getattr(args, "from_db", False)
         if not args.summary_only:
-            gold = extraction_eval.load_gold(args.gold)
-            samples = extraction_eval.load_sample_videos(args.samples_dir)
-            ids = [i for i in gold if i in samples]
+            if from_db:
+                with make_session_factory(make_engine())() as db:
+                    all_videos = load_db_videos(db, default_out_dir(args.instructions))
+                ids = list(all_videos)
+                if not ids:
+                    print("No hay videos en la BD sin analizar.")
+                    return 0
+            else:
+                gold = extraction_eval.load_gold(args.gold)
+                samples = extraction_eval.load_sample_videos(args.samples_dir)
+                ids = [i for i in gold if i in samples]
             ids = ids[:args.limit] if args.limit else ids
             if not ids:
                 logger.error("[scripts.run_claude_pilot.run] Ningún video (revisa --gold y --samples-dir)")
                 return 1
-            videos = {i: samples[i] for i in ids}
+            videos = {i: (all_videos if from_db else samples)[i] for i in ids}
             batches = claude_extraction.build_batches(videos, args.batch_size)
             failures = process_batches(videos, batches, args, runner)
             if failures:
@@ -292,9 +327,10 @@ def run(args: argparse.Namespace, runner=subprocess.run) -> int:
             return 1
         if not args.summary_only and len(predictions) < len(ids):
             print(f"Faltan {len(ids) - len(predictions)} de {len(ids)} videos sin resultado; vuelve a correr el comando.")
-        path = eval_cache_path(args.eval_dir, args.model, args.instructions)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(predictions, ensure_ascii=False, indent=1), encoding="utf-8")
+        if not from_db:   # sin referencia etiquetada no hay nada que medir
+            path = eval_cache_path(args.eval_dir, args.model, args.instructions)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(predictions, ensure_ascii=False, indent=1), encoding="utf-8")
         print_summary(args, total, len(predictions), contacts)
         return 0
     except (ClaudeExtractionError, extraction_eval.EvalError, contact_filters.ContactFilterError) as exc:
@@ -309,7 +345,10 @@ def build_parser() -> argparse.ArgumentParser:
                    default=claude_extraction.INSTRUCTIONS_VERSION, help="Versión de las instrucciones")
     p.add_argument("--with-catalog", action="store_true",
                    help="Pasar a Claude los programas y conductores validados (se simulan con la referencia)")
-    p.add_argument("--limit", type=int, default=None, help="Solo los primeros N videos de la referencia")
+    p.add_argument("--from-db", action="store_true",
+                   help="En vez de la referencia, procesa los videos de la BD que no están en los lotes del piloto "
+                        "(guarda en data/pilot_<versión>_db)")
+    p.add_argument("--limit", type=int, default=None, help="Solo los primeros N videos")
     p.add_argument("--batch-size", type=int, default=claude_extraction.DEFAULT_BATCH_SIZE)
     p.add_argument("--summary-only", action="store_true", help="No llamar a Claude; resumir lo ya guardado")
     p.add_argument("--overhead", action="store_true", help="Medir los tokens fijos de una llamada vacía")
@@ -325,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
     args = build_parser().parse_args(argv)
-    args.out_dir = args.out_dir or default_out_dir(args.instructions)
+    args.out_dir = args.out_dir or default_out_dir(args.instructions, args.from_db)
     return run(args)
 
 

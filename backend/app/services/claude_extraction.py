@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 # v1 = piloto sin catálogos (2026-10-07); v2 = con programas y conductores validados como contexto;
 # v3 = v2 sin el ejemplo que contradecía la regla de "lo de después de los dos puntos es invitado".
 # v4 = v3 + regla de "no devolver enlaces de herramientas/promociones del canal". Probada el 2026-10-07: sin
-# ventaja medible sobre v3 (la variación entre corridas de la misma versión es de ~2 puntos), así que
-# v3 sigue siendo la versión por defecto; los enlaces del canal se descartan en código (contact_filters).
-# v5 = los contactos los saca la regex y Claude solo los asocia (ver contact_candidates).
+# ventaja medible sobre v3 (la variación entre corridas de la misma versión es de ~2 puntos); los enlaces
+# del canal se descartan en código (contact_filters).
+# v5 = los contactos los saca la regex y Claude solo los asocia (ver contact_candidates): mismos
+# nombres que v3 dentro del ruido, pero contactos estables entre corridas. Es la versión por defecto.
 INSTRUCTIONS_VERSIONS = ("v1", "v2", "v3", "v4", "v5")
-INSTRUCTIONS_VERSION = "v3"
+INSTRUCTIONS_VERSION = "v5"
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 INSTRUCTIONS_PATH = PROMPTS_DIR / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"
 DEFAULT_BATCH_SIZE = 15

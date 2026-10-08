@@ -29,7 +29,7 @@ def _output(ids: list[str], **extra) -> str:
 
 def test_load_instructions_trae_la_version_y_las_reglas_de_contactos():
     text = ce.load_instructions()
-    assert ce.INSTRUCTIONS_VERSION in text and "unassigned_contacts" in text
+    assert ce.INSTRUCTIONS_VERSION in text and "contact_links" in text
     assert "varios invitados posibles" in text and "tipo no registrado" in text
 
 

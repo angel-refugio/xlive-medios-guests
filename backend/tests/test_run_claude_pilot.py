@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.claude_extraction import INSTRUCTIONS_VERSION as DEFAULT
 from app.services.claude_extraction import ClaudeExtractionError
 from scripts import run_claude_pilot as pilot
 
@@ -25,11 +24,17 @@ def _samples(tmp_path):
     return samples, gold
 
 
+# Los casos genéricos de este archivo corren con v3 (Claude propone los contactos); la v5, que es la
+# versión por defecto, tiene sus propias pruebas más abajo.
+DEFAULT = "v3"
+
+
 def _args(tmp_path, *extra):
     samples, gold = _samples(tmp_path)
+    version = [] if "--instructions" in extra else ["--instructions", DEFAULT]
     return pilot.build_parser().parse_args([
         "--gold", str(gold), "--samples-dir", str(samples),
-        "--out-dir", str(tmp_path / "pilot"), "--eval-dir", str(tmp_path / "eval"), *extra,
+        "--out-dir", str(tmp_path / "pilot"), "--eval-dir", str(tmp_path / "eval"), *version, *extra,
     ])
 
 
@@ -242,6 +247,11 @@ def test_json_invalido_en_los_dos_intentos_deja_el_lote_pendiente(tmp_path, caps
     assert runner.calls == 2
     assert not list((tmp_path / "pilot").glob("batch_*.json"))
     assert "Todavía no hay lotes" in capsys.readouterr().out
+
+
+def test_la_version_por_defecto_es_la_v5_donde_la_regex_saca_los_contactos():
+    assert pilot.build_parser().parse_args([]).instructions == "v5"
+    assert "v5" in pilot.CANDIDATE_VERSIONS
 
 
 def test_nombres_de_cache_y_carpeta_por_version(tmp_path):

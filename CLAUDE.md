@@ -34,7 +34,7 @@ Organización: categoría, tipo de talento, edad, alcaldía, programa y temporad
 - Backend: Python + FastAPI
 - BD: PostgreSQL en contenedor Docker; pgAdmin como servicio en `docker-compose.yml` para demo al cliente (DBeaver solo si el usuario lo pide)
 - Frontend: React
-- Extracción de candidatos: **Claude (API de Anthropic)**, decidido por el usuario el 2026-10-07 según `docs/Propuesta_extracción_invitados_Claude.md` (reemplaza a Ollama `qwen2.5:3b`, que sigue en el código hasta que el piloto de 150 videos y la integración lo sustituyan; no se reemplaza antes del piloto). Solo título y descripción (sin transcripciones), reglas/regex antes del LLM, por lotes agrupados por serie. Claude Code o la API comparten instrucciones, JSON de salida e importador. `ANTHROPIC_API_KEY` en `.env`, nunca en Git. Los contactos se extraen y asocian al invitado en la misma llamada
+- Extracción de candidatos: **Claude (API de Anthropic)**, decidido por el usuario el 2026-10-07 según `docs/Propuesta_extracción_invitados_Claude.md` (reemplaza a Ollama `qwen2.5:3b`, que sigue en el código hasta que el piloto de 150 videos y la integración lo sustituyan; no se reemplaza antes del piloto). Solo título y descripción (sin transcripciones), reglas/regex antes del LLM, por lotes agrupados por serie. Claude Code o la API comparten instrucciones, JSON de salida e importador. `ANTHROPIC_API_KEY` en `.env`, nunca en Git. Los contactos se extraen y asocian al invitado en la misma llamada. **El extractor por API se hace al final, después de la carga histórica masiva (Fase 7), que usa Claude Code (`claude -p`)** (decisión del usuario, 2026-10-08)
 - Usuario único de la app: "administrador" con todos los permisos (por ahora)
 - Fuente de datos: YouTube Data API v3
 

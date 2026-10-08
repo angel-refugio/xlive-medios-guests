@@ -8,6 +8,37 @@ pendiente con el Ing. Israel, sin bloquear nada hasta la carga histórica masiva
 Documentación general actualizada al cierre: `docs/ARCHITECTURE.md` (sección "Ingesta con IA"),
 `docs/DATA_MODEL.md` (tablas de staging) y `README.md`. Detalle paso a paso abajo.
 
+**Cierre ampliado (2026-10-08).** Después de los 8 pasos, la fase creció con la extracción con
+Claude y los contactos; todo hecho, probado y commiteado:
+- Extracción con Claude Code, instrucciones v5 (`app/prompts`, `scripts/run_claude_pilot.py`; el modo
+  `--from-db` procesa los videos de la BD que aún no pasaron por Claude) e importador a staging
+  (`app/services/claude_import.py`, `scripts/import_claude_results.py`). Los 180 videos de la app
+  están analizados con v5; **ninguno está revisado por un humano todavía**.
+- Tabla de contactos (migración 0010) y contactos en Staging Review: relación (propio, mánager,
+  patrocinador), evidencia, marca de dudoso con motivo y filtro "Contactos dudosos". Al aceptar un
+  contacto se guardan su relación, su video de origen y su evidencia.
+- "Contacto sin asignar" = candidato sin invitado: queda pendiente y quien revisa elige el invitado
+  al aceptarlo (nunca se infiere solo). No existen contactos finales sin invitado.
+- Copias duplicadas: de cada par (el canal sube el video dos veces, uno con 📱) se conserva el que no
+  tiene 📱 (si son iguales, el de menor id). La copia se ignora por completo: no se muestra en
+  Staging Review ni recibe participación; el registro no se borra. La regla se calcula al consultar
+  (`_duplicate_copy_clause`), sin migración.
+- Interfaz en tema oscuro.
+
+**Decisión (2026-10-08): el extractor por API de Anthropic se hace al final, después de la carga
+histórica masiva (Fase 7).** Mientras tanto, la carga masiva usa Claude Code (`claude -p`) con el
+mismo importador. Requisitos para retomarlo: API key en `.env`, aprobación del supervisor y una
+prueba con 10-20 videos nuevos antes de activar la ingesta automática.
+
+**Diferido a propósito (no bloquea el cierre):** quitar `verified` y renombrar el origen del
+contacto (`video_description` → `youtube_description`); editar desde la app la lista de contactos
+ignorados; alias de personas ("Rul" = Raúl, espera aprobación del usuario); protección por contraseña
+de contactos y aviso de privacidad (ver más abajo).
+
+**Límites conocidos:** el selector de invitado de la cola de contactos carga 200 invitados como
+máximo; con la carga masiva habrá que cambiarlo por una búsqueda. El filtro `duplicates` sigue en
+la API aunque la interfaz ya no lo usa.
+
 Preguntas abiertas repasadas con el usuario (2026-09-28): arranca a
 codificar sin esperar el aviso de privacidad, que no bloquea el código (solo la carga masiva de
 la fase 7). **Paso 1 (configuración y contrato de datos) hecho**: `get_ollama_base_url` y
@@ -419,9 +450,10 @@ cómo combinar la confianza cruda del LLM con señales objetivas (título+descri
 persona/banda); cómo marcar videos casi duplicados sin fusionarlos solos; "Expandete TV" es un
 programa del catálogo, no el nombre prohibido del canal (aclarado también en `CLAUDE.md`).
 
-## Adenda: contactos del invitado (decisiones de 2026-10-07; documentadas, aún sin implementar)
-Solo documentación: no hay código, migración ni pruebas de esto todavía. Resumen en
-`PROJECT_BRIEF.md` (FR-008 y secciones 8-9) y reglas breves en `CLAUDE.md`.
+## Adenda: contactos del invitado (decisiones de 2026-10-07; implementadas salvo lo indicado)
+Implementado el 2026-10-07/08 (migración 0010, importador, Staging Review); ver "Cierre ampliado"
+arriba para lo que quedó diferido. Resumen en `PROJECT_BRIEF.md` (FR-008 y secciones 8-9) y reglas
+breves en `CLAUDE.md`.
 
 **Fuentes**
 - Automática: links, @handles, correos y teléfonos escritos en título o descripción del video.
@@ -472,9 +504,9 @@ Solo documentación: no hay código, migración ni pruebas de esto todavía. Res
     y `source` sigue siendo `manual` / `video_description` (equivale al `youtube_description` de
     las decisiones). Quitar `verified` y renombrar el origen tocan la API, la interfaz y sus
     pruebas: quedan para cuando se rediseñe la revisión de contactos.
-  - Falta (Staging Review): revisar contactos por separado del invitado, el filtro "con contactos
-    dudosos", reasignar un contacto sin asignar y que al aceptar un contacto se llenen
-    `relationship_id`, `video_id` y `evidence`.
+  - Staging Review (hecho el 2026-10-08): contactos revisados por separado del invitado, filtro
+    "con contactos dudosos", y al aceptar un contacto se llenan `relationship_id`, `video_id` y
+    `evidence`. Un contacto "sin asignar" es un candidato sin invitado que se asigna al aceptarlo.
 
 **Importador a staging (mismo para Claude Code y para la API)**
 - `app/services/claude_import.py` recibe resultados ya validados (`VideoExtraction`) y los guarda

@@ -11,21 +11,28 @@ from datetime import datetime, timezone
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.models.catalogs import Host, Program
+from app.models.catalogs import ContactRelationship, ContactType, Host, Program
+from app.models.contact import Contact, normalize_contact_value
 from app.models.guest import Guest
 from app.models.ingestion import (
     StagingContactCandidate, StagingGuestCandidate, StagingVideoSuggestion,
 )
+from app.models.participation import Participation
 from app.models.video import Video
 from app.schemas.catalogs import CatalogCreate
 from app.schemas.guests import GuestCreate
 from app.schemas.participations import ParticipationCreate
-from app.schemas.staging import GuestCandidateAccept, ReviewResolve
+from app.schemas.staging import (
+    ContactCandidateAccept, GuestCandidateAccept, ReviewContactCandidate, ReviewResolve,
+)
 from app.services import catalogs as catalogs_service
+from app.services import contacts as contacts_service
 from app.services import guests as guests_service
 from app.services import participations as participations_service
 from app.services import staging as staging_service
 from app.services.catalogs import normalize_name
+from app.services.claude_import import suggest_contact_type_id
+from app.services.contacts import ContactDuplicateError
 from app.services.guests import InvalidReferenceError
 from app.services.participations import ParticipationDuplicateError
 from app.services.videos import VideoNotFoundError
@@ -35,8 +42,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_PAGE_SIZE = 20
 MAX_PAGE_SIZE = 100
 REVIEW_FILTERS = (
-    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "duplicates",
+    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "short",
+    "reviewed", "duplicates",
 )
+# Menos de este tiempo el video es casi seguro un intro: solo aporta el título. Un video sin
+# duración guardada (None) no cuenta como corto; uno con 0 s sí (suele ser una duración que
+# YouTube aún no había fijado al sincronizar).
+SHORT_VIDEO_SECONDS = 60
 
 
 class ReviewInputError(ValueError):
@@ -85,6 +97,16 @@ def _duplicate_copy_clause():
     )
 
 
+def _short_clause():
+    """Video de menos de un minuto (posible intro) que aún no se revisa. Va a su propio filtro y sale
+    de los demás; al marcarlo "sin invitados" (o aceptarlo) deja de contar como corto pendiente y
+    se comporta como cualquier video, así el contador del chip baja al ir resolviéndolos."""
+    return and_(
+        Video.duration_seconds.is_not(None), Video.duration_seconds < SHORT_VIDEO_SECONDS,
+        Video.guest_status == "pending",
+    )
+
+
 def _filter_clause(review_filter: str):
     if review_filter == "pending":
         # Pendiente = invitados candidatos o una sugerencia de programa/conductores sin revisar.
@@ -104,6 +126,11 @@ def _filter_clause(review_filter: str):
         )
     if review_filter == "no_guests":
         return Video.guest_status == "no_guests"
+    if review_filter == "short":
+        return _short_clause()
+    if review_filter == "reviewed":
+        # Videos con invitados ya aceptados (los "sin invitados" tienen su propio filtro).
+        return Video.guest_status == "has_guests"
     if review_filter == "duplicates":
         return _duplicate_copy_clause()
     msg = f"Filtro de revisión desconocido: {review_filter!r}"
@@ -115,6 +142,8 @@ def _base_filters(review_filter: str, q: str | None) -> list:
     filters = [Video.last_ingested_at.is_not(None), _filter_clause(review_filter)]
     if review_filter != "duplicates":
         filters.append(~_duplicate_copy_clause())   # las copias no se revisan
+    if review_filter != "short":
+        filters.append(~_short_clause())            # los cortos se revisan aparte
     if q and q.strip():
         filters.append(Video.title.ilike(f"%{q.strip()}%"))
     return filters
@@ -149,6 +178,12 @@ def list_review_videos(
 
     guests_by_video: dict[int, list] = {i: [] for i in ids}
     contacts_by_video: dict[int, list] = {i: [] for i in ids}
+    participants_by_video: dict[int, list] = {i: [] for i in ids}
+    contact_types = [
+        (row.id, row.name) for row in db.execute(
+            select(ContactType.id, ContactType.name).where(ContactType.is_active.is_(True))
+        )
+    ]
     if ids:
         for cand in db.execute(
             select(StagingGuestCandidate)
@@ -161,7 +196,15 @@ def list_review_videos(
             .where(StagingContactCandidate.video_id.in_(ids), StagingContactCandidate.status == "pending")
             .order_by(StagingContactCandidate.id)
         ).scalars():
-            contacts_by_video[cand.video_id].append(cand)
+            data = ReviewContactCandidate.model_validate(cand).model_dump()
+            data["suggested_contact_type_id"] = suggest_contact_type_id(cand.type_hint, contact_types)
+            contacts_by_video[cand.video_id].append(data)
+        for video_id, guest_id, full_name in db.execute(
+            select(Participation.video_id, Guest.id, Guest.full_name)
+            .join(Guest, Guest.id == Participation.guest_id)
+            .where(Participation.video_id.in_(ids)).order_by(Guest.full_name)
+        ):
+            participants_by_video[video_id].append({"id": guest_id, "full_name": full_name})
 
     suggestions = {
         sug.video_id: sug for sug in db.execute(
@@ -221,6 +264,7 @@ def list_review_videos(
             "usual_host_names": usual,
             "guest_candidates": guests_by_video[v.id],
             "contact_candidates": contacts_by_video[v.id],
+            "participants": participants_by_video[v.id],
         })
     return items, total
 
@@ -318,6 +362,83 @@ def _close_suggestion(db: Session, video_id: int, accepted: bool) -> None:
         suggestion.reviewed_at = datetime.now(timezone.utc)
 
 
+def _validated_contacts(db: Session, video_id: int, data: ReviewResolve, accept_ids: list[int]) -> None:
+    """Valida los contactos ANTES de escribir: que sean pendientes de este video, que el tipo y la
+    relación existan y que cada contacto aceptado apunte a un invitado que sí quedará registrado."""
+    where = "app.services.staging_review._validated_contacts"
+    accepted = [c.candidate_id for c in data.contacts]
+    overlap = set(accepted) & set(data.reject_contact_ids)
+    if (overlap or len(set(accepted)) != len(accepted)
+            or len(set(data.reject_contact_ids)) != len(data.reject_contact_ids)):
+        msg = f"Contactos repetidos o aceptados y rechazados a la vez: {sorted(overlap) or accepted}"
+        logger.warning("[%s] %s", where, msg)
+        raise ReviewInputError(msg)
+    for candidate_id in [*accepted, *data.reject_contact_ids]:
+        candidate = staging_service.get_contact_candidate(db, candidate_id)  # 404 si no existe
+        if candidate.video_id != video_id:
+            msg = f"El contacto {candidate_id} no pertenece al video {video_id}"
+            logger.warning("[%s] %s", where, msg)
+            raise ReviewInputError(msg)
+        staging_service._ensure_pending(candidate, "contacto")  # 409 si ya se revisó
+    added_names = {normalize_name(a.full_name) for a in data.added_guests}
+    for item in data.contacts:
+        contacts_service._check_contact_type(db, item.contact_type_id, current_id=None)
+        if item.relationship_id is not None and db.get(ContactRelationship, item.relationship_id) is None:
+            msg = f"La relación de contacto {item.relationship_id} no existe"
+            logger.warning("[%s] %s", where, msg)
+            raise InvalidReferenceError(msg)
+        if item.guest_candidate_id is not None and item.guest_candidate_id not in accept_ids:
+            msg = (f"El contacto {item.candidate_id} apunta al candidato de invitado "
+                   f"{item.guest_candidate_id}, que no se acepta en esta resolución")
+            logger.warning("[%s] %s", where, msg)
+            raise ReviewInputError(msg)
+        if item.added_guest_name is not None and normalize_name(item.added_guest_name) not in added_names:
+            msg = f"El contacto {item.candidate_id} apunta a un invitado agregado que no existe en la resolución"
+            logger.warning("[%s] %s", where, msg)
+            raise ReviewInputError(msg)
+        if item.existing_guest_id is not None:
+            guests_service.get_guest(db, item.existing_guest_id)  # 404 si no existe
+
+
+def _apply_contacts(
+    db: Session, data: ReviewResolve, guest_by_candidate: dict[int, int], guest_by_added: dict[str, int],
+) -> tuple[list[int], int]:
+    """Crea los contactos aceptados y rechaza los descartados. Si el invitado ya tenía ese contacto,
+    el candidato se cierra apuntando al existente (no se duplica ni se falla a medias)."""
+    accepted_ids: list[int] = []
+    for item in data.contacts:
+        if item.guest_candidate_id is not None:
+            guest_id = guest_by_candidate[item.guest_candidate_id]
+        elif item.added_guest_name is not None:
+            guest_id = guest_by_added[normalize_name(item.added_guest_name)]
+        else:
+            guest_id = item.existing_guest_id
+        accept = ContactCandidateAccept(
+            guest_id=guest_id, contact_type_id=item.contact_type_id, value=item.value,
+            relationship_id=item.relationship_id,
+        )
+        try:
+            contact = staging_service.accept_contact_candidate(db, item.candidate_id, accept)
+        except ContactDuplicateError:
+            candidate = staging_service.get_contact_candidate(db, item.candidate_id)
+            contact = db.execute(select(Contact).where(
+                Contact.guest_id == guest_id, Contact.contact_type_id == item.contact_type_id,
+                Contact.normalized_value == normalize_contact_value(item.value or candidate.value),
+            )).scalar_one()
+            candidate.status = "accepted"
+            candidate.linked_contact_id = contact.id
+            candidate.reviewed_at = datetime.now(timezone.utc)
+            db.commit()
+            logger.info(
+                "[app.services.staging_review._apply_contacts] El invitado %s ya tenía el contacto "
+                "del candidato %s: se vincula al existente", guest_id, item.candidate_id,
+            )
+        accepted_ids.append(contact.id)
+    for candidate_id in data.reject_contact_ids:
+        staging_service.reject_contact_candidate(db, candidate_id)
+    return accepted_ids, len(data.reject_contact_ids)
+
+
 def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
     """Aplica la decisión del humano sobre un video. Valida todo ANTES de escribir.
 
@@ -347,8 +468,11 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
     for candidate_id in [*accept_ids, *data.reject_candidate_ids]:
         _validated_pending(db, video_id, candidate_id)
     program, host_plan = _validated_program_and_hosts(db, video, data)
+    _validated_contacts(db, video_id, data, accept_ids)
 
     accepted_guest_ids: list[int] = []
+    guest_by_candidate: dict[int, int] = {}
+    guest_by_added: dict[str, int] = {}
     for item in data.guests:
         candidate = staging_service.get_guest_candidate(db, item.candidate_id)
         name = item.full_name or candidate.extracted_name
@@ -360,7 +484,9 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
             accept = GuestCandidateAccept(existing_guest_id=existing_id)
         else:
             accept = GuestCandidateAccept(full_name=name)
-        accepted_guest_ids.append(staging_service.accept_guest_candidate(db, item.candidate_id, accept).id)
+        guest_id = staging_service.accept_guest_candidate(db, item.candidate_id, accept).id
+        guest_by_candidate[item.candidate_id] = guest_id
+        accepted_guest_ids.append(guest_id)
 
     rejected = 0
     for candidate_id in data.reject_candidate_ids:
@@ -375,7 +501,10 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
                 db, GuestCreate(full_name=added.full_name)
             )
         _link_participation(db, guest.id, video_id)
+        guest_by_added[normalize_name(added.full_name)] = guest.id
         accepted_guest_ids.append(guest.id)
+
+    accepted_contact_ids, rejected_contacts = _apply_contacts(db, data, guest_by_candidate, guest_by_added)
 
     if data.no_guests:
         for candidate in db.execute(
@@ -396,4 +525,5 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
         "video_id": video_id, "guest_status": video.guest_status,
         "accepted_guest_ids": accepted_guest_ids, "rejected_count": rejected,
         "program_id": video.program_id, "host_ids": host_ids,
+        "accepted_contact_ids": accepted_contact_ids, "rejected_contact_count": rejected_contacts,
     }

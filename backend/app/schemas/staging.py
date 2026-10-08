@@ -2,7 +2,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.guests import _clean_optional_text
 from app.schemas.videos import VideoSummary
@@ -127,7 +127,8 @@ class ContactCandidateAccept(BaseModel):
 # --- Revisión por video (Staging Review rediseñado) ----------------------------
 
 ReviewFilter = Literal[
-    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "duplicates",
+    "pending", "with_contacts", "doubtful_contacts", "no_candidates", "no_guests", "short",
+    "reviewed", "duplicates",
 ]
 
 
@@ -159,6 +160,17 @@ class ReviewContactCandidate(BaseModel):
     doubtful_reason: str | None = None
     guest_name: str | None = None
     possible_guest_name: str | None = None
+    # Candidato de invitado al que la IA lo asignó (puede ya no estar pendiente) y tipo del
+    # catálogo que corresponde a la pista, para dejarlos preseleccionados en la tarjeta.
+    guest_candidate_id: int | None = None
+    suggested_contact_type_id: int | None = None
+
+
+class ReviewParticipant(BaseModel):
+    """Invitado que ya participa en el video (para asignarle contactos que quedaron pendientes)."""
+
+    id: int
+    full_name: str
 
 
 class ReviewDoubtful(BaseModel):
@@ -190,6 +202,7 @@ class ReviewVideoOut(BaseModel):
     usual_host_names: list[str] = []
     guest_candidates: list[ReviewGuestCandidate]
     contact_candidates: list[ReviewContactCandidate]
+    participants: list[ReviewParticipant] = []
 
 
 class ReviewVideoPage(BaseModel):
@@ -207,6 +220,8 @@ class ReviewCounts(BaseModel):
     doubtful_contacts: int
     no_candidates: int
     no_guests: int
+    short: int
+    reviewed: int
     duplicates: int
 
 
@@ -236,6 +251,32 @@ class ReviewAddedGuest(BaseModel):
         return value
 
 
+class ReviewContactAccept(BaseModel):
+    """Acepta un contacto candidato del video y lo atribuye a un invitado. El invitado se indica
+    con EXACTAMENTE una referencia: el candidato de invitado que se acepta en esta misma
+    resolución, el invitado agregado a mano (por su nombre) o un invitado que ya existe."""
+
+    candidate_id: int
+    contact_type_id: int
+    relationship_id: int | None = None
+    value: str | None = None
+    guest_candidate_id: int | None = None
+    added_guest_name: str | None = None
+    existing_guest_id: int | None = None
+
+    _clean_value = field_validator("value")(_clean_value)
+
+    @model_validator(mode="after")
+    def _exactly_one_guest_reference(self):
+        refs = [self.guest_candidate_id, self.added_guest_name, self.existing_guest_id]
+        if sum(ref is not None for ref in refs) != 1:
+            raise ValueError(
+                "El contacto necesita exactamente un invitado: guest_candidate_id, "
+                "added_guest_name o existing_guest_id"
+            )
+        return self
+
+
 class ReviewResolve(BaseModel):
     """Lo que decide el humano sobre un video: aceptar (con ediciones), quitar y/o agregar
     invitados, o marcarlo "sin invitados"."""
@@ -249,6 +290,10 @@ class ReviewResolve(BaseModel):
     # resolver el video se cierra su sugerencia: aceptada si se envió alguno, rechazada si no.
     program_id: int | None = None
     host_names: list[str] = []
+    # Contactos del video: los que se aceptan (atribuidos a un invitado) y los que se descartan.
+    # Los pendientes que no se mencionan siguen pendientes.
+    contacts: list[ReviewContactAccept] = []
+    reject_contact_ids: list[int] = []
 
     @field_validator("host_names")
     @classmethod
@@ -270,3 +315,5 @@ class ReviewResolveOut(BaseModel):
     rejected_count: int
     program_id: int | None = None
     host_ids: list[int] = []
+    accepted_contact_ids: list[int] = []
+    rejected_contact_count: int = 0

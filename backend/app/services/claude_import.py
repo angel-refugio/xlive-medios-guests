@@ -40,10 +40,12 @@ logger = logging.getLogger(__name__)
 EXTRACTORS = ("claude_code", "claude_api")
 # Los contactos salen de la regex (patrones explícitos): misma confianza inicial que en el pipeline.
 _CONTACT_CONFIDENCE = 0.7
+# Sinónimos de cada pista, de la más a la menos preferida (la primera que exista en el catálogo se
+# propone en Staging Review).
 _CONTACT_TYPE_SYNONYMS = {
-    "email": {"correo", "email", "e-mail", "correo electronico"},
-    "telefono": {"telefono", "celular", "movil", "whatsapp"},
-    "url": {"web", "pagina web", "sitio web", "sitio"},
+    "email": ("correo", "email", "e-mail", "correo electronico"),
+    "telefono": ("celular", "telefono", "movil", "whatsapp"),
+    "url": ("sitio web", "web", "pagina web", "sitio"),
 }
 
 
@@ -103,7 +105,18 @@ def type_is_registered(type_hint: str, registered_names: list[str]) -> bool:
     nunca coincide: el administrador decide la red al revisarlo."""
     hint = normalize_name(type_hint)
     registered = {normalize_name(n) for n in registered_names}
-    return hint in registered or bool(_CONTACT_TYPE_SYNONYMS.get(hint, set()) & registered)
+    return hint in registered or bool(set(_CONTACT_TYPE_SYNONYMS.get(hint, ())) & registered)
+
+
+def suggest_contact_type_id(type_hint: str, types: list[tuple[int, str]]) -> int | None:
+    """Id del tipo activo del catálogo que corresponde a la pista (`types`: (id, nombre)): primero
+    el de nombre igual y después el primer sinónimo que exista. None si no hay ninguno."""
+    by_name = {normalize_name(name): type_id for type_id, name in types}
+    hint = normalize_name(type_hint)
+    for candidate in (hint, *_CONTACT_TYPE_SYNONYMS.get(hint, ())):
+        if candidate in by_name:
+            return by_name[candidate]
+    return None
 
 
 def _contact_flags(

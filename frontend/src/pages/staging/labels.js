@@ -11,5 +11,21 @@ export const matchRelationshipId = (relationships, name) => {
   return found ? String(found.id) : "";
 };
 
+// Mismo nombre sin importar mayúsculas, acentos ni signos ("Héctor A." ~ "hector a").
+export const sameName = (a, b) => {
+  const key = (text) => plain(text).replace(/[^a-z0-9]/g, "");
+  return key(a) !== "" && key(a) === key(b);
+};
+
+// Pistas que no son una red o servicio concreto: para ellas no se ofrece "Crear tipo".
+const GENERIC_TYPE_HINTS = ["handle", "url", "email", "telefono", "contacto", "otro"];
+export const canCreateTypeFrom = (hint) => Boolean(hint) && !GENERIC_TYPE_HINTS.includes(plain(hint));
+
+// "whatsapp" -> "Whatsapp" (nombre propuesto para un tipo de contacto nuevo)
+export const typeNameFromHint = (hint) => {
+  const text = hint.trim();
+  return text.charAt(0).toUpperCase() + text.slice(1).toLowerCase();
+};
+
 // 0.83 -> "83%"
 export const confidencePercent = (value) => `${Math.round(value * 100)}%`;

@@ -142,6 +142,12 @@ export function createFakeBackend({
       return fakeResponse(200, db.catalogs[m[1]].filter((i) => i.is_active));
     }
 
+    if (pathname === "/contact-types" && method === "POST") {
+      const item = { id: db.nextId++, name: body.name, is_active: true };
+      db.catalogs["contact-types"].push(item);
+      return fakeResponse(201, item);
+    }
+
     // ---- Invitados ----
     if (pathname === "/guests") {
       if (method === "GET") return fakeResponse(200, pageOf(db.guests, params));
@@ -378,6 +384,19 @@ export function createFakeBackend({
     }
 
     // ---- Revisión por video (se consideran "ingeridos" los videos con source "youtube") ----
+    // Tipo del catálogo que corresponde a la pista (nombre igual o sinónimo habitual), como el backend.
+    const typeSynonyms = { email: ["correo"], telefono: ["celular", "telefono"], url: ["sitio web", "web"] };
+    const suggestedType = (hint) => {
+      const names = [hint.toLowerCase(), ...(typeSynonyms[hint.toLowerCase()] ?? [])];
+      for (const name of names) {
+        const found = db.catalogs["contact-types"].find((t) => t.is_active && t.name.toLowerCase() === name);
+        if (found) return found.id;
+      }
+      return null;
+    };
+    // Corto pendiente: menos de 60 s (0 cuenta; sin duración no) y aún sin revisar, como el backend.
+    const isShortPending = (v) =>
+      typeof v.duration_seconds === "number" && v.duration_seconds < 60 && v.guest_status === "pending";
     // Misma regla que el backend: de un par se conserva el que no tiene 📱 y, si son iguales, el de menor id.
     const isDuplicateCopy = (v) => {
       const original = db.videos.find((o) => o.id === v.possible_duplicate_of_video_id);
@@ -396,11 +415,19 @@ export function createFakeBackend({
       no_candidates: (v) =>
         pendingGuests(v.id).length === 0 && pendingContacts(v.id).length === 0 && !pendingSuggestion(v.id) && v.guest_status === "pending",
       no_guests: (v) => v.guest_status === "no_guests",
+      short: (v) => isShortPending(v),
+      reviewed: (v) => v.guest_status === "has_guests",
       duplicates: (v) => isDuplicateCopy(v),
     };
     const reviewVideos = (filter, q) =>
       db.videos
-        .filter((v) => v.source === "youtube" && reviewFilters[filter](v) && (filter === "duplicates" || !isDuplicateCopy(v)))
+        .filter(
+          (v) =>
+            v.source === "youtube" &&
+            reviewFilters[filter](v) &&
+            (filter === "duplicates" || !isDuplicateCopy(v)) &&
+            (filter === "short" || !isShortPending(v)),
+        )
         .filter((v) => !q || v.title.toLowerCase().includes(q.toLowerCase()));
 
     if (pathname === "/staging/review/counts" && method === "GET") {
@@ -436,7 +463,16 @@ export function createFakeBackend({
               ...(db.programHosts[v.program?.id ?? suggestedProgram?.id] ?? []),
             ].filter((name, i, all) => all.indexOf(name) === i && !(suggestion?.host_names ?? []).includes(name)),
             guest_candidates: pendingGuests(v.id),
-            contact_candidates: pendingContacts(v.id),
+            contact_candidates: pendingContacts(v.id).map((c) => ({
+              ...c,
+              guest_candidate_id: c.guest_candidate_id ?? null,
+              suggested_contact_type_id: suggestedType(c.type_hint),
+            })),
+            participants: db.participations
+              .filter((p) => p.video_id === v.id)
+              .map((p) => db.guests.find((g) => g.id === p.guest_id))
+              .filter(Boolean)
+              .map((g) => ({ id: g.id, full_name: g.full_name })),
           };
         }),
       });
@@ -466,18 +502,52 @@ export function createFakeBackend({
           db.participations.push({ id: db.nextId++, guest_id: guest.id, video_id: video.id, notes: null });
         }
         acceptedIds.push(guest.id);
+        return guest.id;
       };
+      const guestByCandidate = {};
       for (const item of guestsIn) {
         const candidate = db.guestCandidates.find((c) => c.id === item.candidate_id);
         if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de invitado ${item.candidate_id}` });
-        linkGuest(item.full_name || candidate.extracted_name);
+        guestByCandidate[item.candidate_id] = linkGuest(item.full_name || candidate.extracted_name);
         candidate.status = "accepted";
       }
       for (const id of rejectIds) {
         const candidate = db.guestCandidates.find((c) => c.id === id);
         if (candidate) candidate.status = "rejected";
       }
-      for (const item of added) linkGuest(item.full_name);
+      const guestByAdded = {};
+      for (const item of added) guestByAdded[item.full_name.toLowerCase()] = linkGuest(item.full_name);
+      // Contactos: se aceptan atribuidos a un invitado (candidato aceptado, agregado o existente).
+      const acceptedContactIds = [];
+      for (const item of body.contacts ?? []) {
+        const candidate = db.contactCandidates.find((c) => c.id === item.candidate_id);
+        if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de contacto ${item.candidate_id}` });
+        const guestId =
+          item.guest_candidate_id != null
+            ? guestByCandidate[item.guest_candidate_id]
+            : item.added_guest_name != null
+              ? guestByAdded[item.added_guest_name.toLowerCase()]
+              : item.existing_guest_id;
+        if (!guestId) return fakeResponse(422, { detail: "El contacto apunta a un invitado que no se registra" });
+        const contact = {
+          id: db.nextId++,
+          guest_id: guestId,
+          contact_type: catalogItem("contact-types", item.contact_type_id),
+          value: item.value ?? candidate.value,
+          note: null,
+          source: "video_description",
+          verified: false,
+          relationship: catalogItem("contact-relationships", item.relationship_id),
+        };
+        db.contacts.push(contact);
+        candidate.status = "accepted";
+        candidate.linked_contact_id = contact.id;
+        acceptedContactIds.push(contact.id);
+      }
+      for (const id of body.reject_contact_ids ?? []) {
+        const candidate = db.contactCandidates.find((c) => c.id === id);
+        if (candidate) candidate.status = "rejected";
+      }
       let rejected = rejectIds.length;
       if (body.no_guests) {
         for (const candidate of pendingGuests(video.id)) {
@@ -505,6 +575,7 @@ export function createFakeBackend({
       return fakeResponse(200, {
         video_id: video.id, guest_status: video.guest_status, accepted_guest_ids: acceptedIds,
         rejected_count: rejected, program_id: video.program?.id ?? null, host_ids: hostIds,
+        accepted_contact_ids: acceptedContactIds, rejected_contact_count: (body.reject_contact_ids ?? []).length,
       });
     }
 

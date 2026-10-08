@@ -2,10 +2,11 @@
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.catalogs import Host, Program
+from app.models.catalogs import ContactRelationship, ContactType, Host, Program
+from app.models.contact import Contact
 from app.models.guest import Guest
 from app.models.ingestion import (
     StagingContactCandidate, StagingGuestCandidate, StagingVideoSuggestion,
@@ -18,7 +19,7 @@ NOW = datetime(2024, 5, 1, tzinfo=timezone.utc)
 
 def _seed_video(
     engine, yt="v1", title="Video 1", ingested=True, status="pending", published=None,
-    duplicate_of=None, guests=(), contacts=(),
+    duplicate_of=None, guests=(), contacts=(), duration=None,
 ) -> tuple[int, list[int]]:
     """Crea un video con candidatos pendientes. `guests`: (nombre, confianza); `contacts`:
     (tipo, valor). Devuelve (video_id, ids de candidatos de invitado)."""
@@ -26,7 +27,7 @@ def _seed_video(
         video = Video(
             youtube_video_id=yt, title=title, source="youtube", guest_status=status,
             last_ingested_at=NOW if ingested else None, published_at=published,
-            possible_duplicate_of_video_id=duplicate_of,
+            possible_duplicate_of_video_id=duplicate_of, duration_seconds=duration,
         )
         s.add(video)
         s.commit()
@@ -78,6 +79,7 @@ def test_lists_ingested_videos_with_pending_candidates_by_confidence(api_client,
         "id": video["contact_candidates"][0]["id"], "type_hint": "instagram", "value": "@alta",
         "relationship_name": None, "evidence": None, "doubtful": False, "doubtful_reason": None,
         "guest_name": None, "possible_guest_name": None,
+        "guest_candidate_id": None, "suggested_contact_type_id": None,
     }]
     assert {"adjusted_confidence", "evidence", "is_possible_group"} <= set(video["guest_candidates"][0])
 
@@ -92,8 +94,67 @@ def test_counts_per_filter(api_client, api_engine):
     assert api_client.get("/staging/review/counts").json() == {
         # "Duplicado" es la copia de "Con invitados": no cuenta en nada salvo en duplicados.
         "pending": 1, "with_contacts": 1, "doubtful_contacts": 0, "no_candidates": 1,
-        "no_guests": 1, "duplicates": 1,
+        "no_guests": 1, "short": 0, "reviewed": 0, "duplicates": 1,
     }
+
+
+def test_revisados_lista_los_videos_con_invitados_aceptados_y_sus_participantes(api_client, api_engine):
+    video_id, (g1,) = _seed_video(api_engine, "v1", "Con Ana", guests=[("Ana", 0.9)])
+    _seed_video(api_engine, "v2", "Sin revisar", guests=[("Luis", 0.9)])
+    _seed_video(api_engine, "v3", "Sin invitados", status="no_guests")
+    assert _titles(api_client, "reviewed") == []
+
+    assert _resolve(api_client, video_id, guests=[{"candidate_id": g1}]).status_code == 200
+
+    counts = api_client.get("/staging/review/counts").json()
+    assert counts["reviewed"] == 1 and counts["pending"] == 1 and counts["no_guests"] == 1
+    body = api_client.get("/staging/review/videos", params={"filter": "reviewed"}).json()
+    assert [v["title"] for v in body["items"]] == ["Con Ana"]
+    assert [p["full_name"] for p in body["items"][0]["participants"]] == ["Ana"]
+    assert body["items"][0]["guest_candidates"] == []                 # ya no quedan candidatos
+
+
+def test_los_videos_de_menos_de_un_minuto_van_al_filtro_cortos_y_salen_de_los_demas(api_client, api_engine):
+    _seed_video(api_engine, "v1", "Intro 15 s", duration=15, guests=[("Ana", 0.9)])
+    _seed_video(api_engine, "v2", "Sin duración fija", duration=0, guests=[("Luis", 0.9)])
+    _seed_video(api_engine, "v3", "Justo bajo el corte", duration=59, contacts=[("email", "a@b.com")])
+    _seed_video(api_engine, "v4", "En el corte", duration=60, guests=[("Eva", 0.9)])
+    _seed_video(api_engine, "v5", "Largo", duration=1340, guests=[("Pía", 0.9)])
+    _seed_video(api_engine, "v6", "Sin duración guardada", duration=None, guests=[("Teo", 0.9)])
+
+    assert _titles(api_client, "short") == ["Intro 15 s", "Justo bajo el corte", "Sin duración fija"]
+    assert _titles(api_client, "pending") == ["En el corte", "Largo", "Sin duración guardada"]
+    assert _titles(api_client, "with_contacts") == []            # su contacto se ve en Cortos, no aquí
+    counts = api_client.get("/staging/review/counts").json()
+    assert counts["short"] == 3 and counts["pending"] == 3 and counts["with_contacts"] == 0
+
+
+def test_un_corto_conserva_sus_candidatos_en_el_filtro_cortos(api_client, api_engine):
+    _seed_video(api_engine, "v1", "Intro", duration=15, guests=[("Ana", 0.9)], contacts=[("email", "a@b.com")])
+    video = api_client.get("/staging/review/videos", params={"filter": "short"}).json()["items"][0]
+    assert [g["extracted_name"] for g in video["guest_candidates"]] == ["Ana"]
+    assert len(video["contact_candidates"]) == 1
+
+
+def test_al_marcar_un_corto_sin_invitados_deja_de_contar_como_corto_pendiente(api_client, api_engine):
+    video_id, _ = _seed_video(api_engine, "v1", "Intro", duration=15, guests=[("Ana", 0.9)])
+    assert api_client.get("/staging/review/counts").json()["short"] == 1
+
+    assert _resolve(api_client, video_id, no_guests=True).status_code == 200
+
+    counts = api_client.get("/staging/review/counts").json()
+    assert counts["short"] == 0 and counts["no_guests"] == 1     # ahora es un "sin invitados" más
+    assert _titles(api_client, "no_guests") == ["Intro"]
+
+
+def test_la_copia_con_celular_de_un_corto_no_aparece_en_cortos(api_client, api_engine):
+    original, _ = _seed_video(api_engine, "v1", "Intro", duration=15, guests=[("Ana", 0.9)])
+    copia, _ = _seed_video(api_engine, "v2", "Intro 📱", duration=14, guests=[("Ana", 0.9)],
+                           duplicate_of=original)
+    with Session(api_engine) as s:
+        s.get(Video, original).possible_duplicate_of_video_id = copia
+        s.commit()
+    assert _titles(api_client, "short") == ["Intro"]
 
 
 def _titles(api_client, name):
@@ -352,8 +413,172 @@ def test_resolve_with_nothing_changes_nothing(api_client, api_engine):
     assert body == {
         "video_id": video_id, "guest_status": "pending", "accepted_guest_ids": [],
         "rejected_count": 0, "program_id": None, "host_ids": [],
+        "accepted_contact_ids": [], "rejected_contact_count": 0,
     }
     assert _status(api_engine, c1) == "pending"
+
+
+# --- contactos dentro de la resolución del video ---------------------------------------------
+
+def _seed_types(engine, *names) -> dict[str, int]:
+    with Session(engine) as s:
+        types = [ContactType(name=n) for n in names]
+        relation = ContactRelationship(name="manager")
+        s.add_all([*types, relation])
+        s.commit()
+        return {**{t.name: t.id for t in types}, "_manager": relation.id}
+
+
+def _contact_ids(engine, video_id) -> list[int]:
+    with Session(engine) as s:
+        return list(s.scalars(select(StagingContactCandidate.id)
+                              .where(StagingContactCandidate.video_id == video_id)
+                              .order_by(StagingContactCandidate.id)))
+
+
+def _contact_status(engine, candidate_id) -> str:
+    with Session(engine) as s:
+        return s.get(StagingContactCandidate, candidate_id).status
+
+
+def _resolve(api_client, video_id, **body):
+    return api_client.post(f"/staging/review/videos/{video_id}/resolve", json=body)
+
+
+def test_resolve_acepta_el_contacto_y_lo_atribuye_al_invitado_aceptado(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, (g1,) = _seed_video(api_engine, guests=[("Ana", 0.9)], contacts=[("email", "ana@mail.com")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    _mark_contacts(api_engine, video_id, evidence="Contacto: ana@mail.com")
+
+    body = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], contacts=[{
+        "candidate_id": c1, "contact_type_id": types["Correo"], "relationship_id": types["_manager"],
+        "guest_candidate_id": g1,
+    }]).json()
+
+    assert len(body["accepted_contact_ids"]) == 1 and body["rejected_contact_count"] == 0
+    with Session(api_engine) as s:
+        contact = s.get(Contact, body["accepted_contact_ids"][0])
+        assert contact.guest_id == body["accepted_guest_ids"][0]
+        assert (contact.value, contact.source, contact.verified) == ("ana@mail.com", "video_description", False)
+        assert contact.relationship_id == types["_manager"]
+        assert (contact.video_id, contact.evidence) == (video_id, "Contacto: ana@mail.com")
+    assert _contact_status(api_engine, c1) == "accepted"
+
+
+def test_resolve_atribuye_el_contacto_a_un_invitado_agregado_a_mano(api_client, api_engine):
+    types = _seed_types(api_engine, "Celular")
+    video_id, _ = _seed_video(api_engine, contacts=[("telefono", "5512345678")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    body = _resolve(api_client, video_id, added_guests=[{"full_name": "Luis Pérez"}], contacts=[{
+        "candidate_id": c1, "contact_type_id": types["Celular"], "added_guest_name": "luis perez",
+    }]).json()
+    with Session(api_engine) as s:
+        assert s.get(Contact, body["accepted_contact_ids"][0]).guest_id == body["accepted_guest_ids"][0]
+
+
+def test_resolve_asigna_un_contacto_pendiente_a_un_invitado_existente(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, _ = _seed_video(api_engine, status="has_guests", contacts=[("email", "a@b.com")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    with Session(api_engine) as s:
+        guest = Guest(full_name="Ana")
+        s.add(guest)
+        s.commit()
+        guest_id = guest.id
+    resp = _resolve(api_client, video_id, contacts=[{
+        "candidate_id": c1, "contact_type_id": types["Correo"], "existing_guest_id": guest_id,
+    }])
+    assert resp.status_code == 200
+    with Session(api_engine) as s:
+        assert s.get(Contact, resp.json()["accepted_contact_ids"][0]).guest_id == guest_id
+
+
+def test_resolve_rechaza_los_contactos_descartados_y_deja_pendientes_los_no_mencionados(api_client, api_engine):
+    video_id, _ = _seed_video(api_engine, contacts=[("email", "a@b.com"), ("telefono", "5511111111"), ("url", "http://x.com")])
+    c1, c2, c3 = _contact_ids(api_engine, video_id)
+    body = _resolve(api_client, video_id, reject_contact_ids=[c1]).json()
+    assert body["rejected_contact_count"] == 1
+    assert [_contact_status(api_engine, c) for c in (c1, c2, c3)] == ["rejected", "pending", "pending"]
+
+
+def test_resolve_si_el_invitado_del_contacto_no_se_acepta_no_escribe_nada(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, (g1, g2) = _seed_video(api_engine, guests=[("Ana", 0.9), ("Luis", 0.8)],
+                                      contacts=[("email", "a@b.com")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    resp = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], reject_candidate_ids=[g2], contacts=[{
+        "candidate_id": c1, "contact_type_id": types["Correo"], "guest_candidate_id": g2,
+    }])
+    assert resp.status_code == 422
+    assert [_status(api_engine, g) for g in (g1, g2)] == ["pending", "pending"]   # nada a medias
+    assert _contact_status(api_engine, c1) == "pending"
+
+
+def test_resolve_valida_los_contactos_antes_de_escribir(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, (g1,) = _seed_video(api_engine, guests=[("Ana", 0.9)], contacts=[("email", "a@b.com")])
+    other, _ = _seed_video(api_engine, "v2", "Otro", contacts=[("email", "x@y.com")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    (foreign,) = _contact_ids(api_engine, other)
+    base = {"candidate_id": c1, "contact_type_id": types["Correo"], "guest_candidate_id": g1}
+    bad_cases = [
+        ({**base, "contact_type_id": 999}, 422),                       # tipo inexistente
+        ({**base, "relationship_id": 999}, 422),                       # relación inexistente
+        ({**base, "candidate_id": foreign}, 422),                      # contacto de otro video
+        ({**base, "candidate_id": 999}, 404),                          # contacto inexistente
+        ({"candidate_id": c1, "contact_type_id": types["Correo"], "existing_guest_id": 999}, 404),
+        ({"candidate_id": c1, "contact_type_id": types["Correo"]}, 422),  # sin invitado
+        ({**base, "added_guest_name": "Ana"}, 422),                    # dos referencias a la vez
+    ]
+    for contact, expected in bad_cases:
+        resp = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], contacts=[contact])
+        assert resp.status_code == expected, (contact, resp.text)
+        assert _status(api_engine, g1) == "pending"                    # nunca se escribió a medias
+
+
+def test_resolve_contacto_repetido_se_vincula_al_existente_sin_duplicar(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, (g1,) = _seed_video(api_engine, guests=[("Ana", 0.9)], contacts=[("email", "ANA@mail.com")])
+    (c1,) = _contact_ids(api_engine, video_id)
+    with Session(api_engine) as s:   # Ana ya existe y ya tiene ese contacto
+        ana = Guest(full_name="Ana")
+        s.add(ana)
+        s.commit()
+        existing = Contact(guest_id=ana.id, contact_type_id=types["Correo"], value="ana@mail.com")
+        s.add(existing)
+        s.commit()
+        existing_id = existing.id
+
+    resp = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], contacts=[{
+        "candidate_id": c1, "contact_type_id": types["Correo"], "guest_candidate_id": g1,
+    }])
+    assert resp.status_code == 200 and resp.json()["accepted_contact_ids"] == [existing_id]
+    with Session(api_engine) as s:
+        assert s.scalar(select(func.count(Contact.id))) == 1
+        assert s.get(StagingContactCandidate, c1).linked_contact_id == existing_id
+    assert _status(api_engine, g1) == "accepted"
+
+
+def test_la_lista_ofrece_tipo_sugerido_invitado_del_contacto_y_participantes(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo", "Celular")
+    video_id, (g1,) = _seed_video(api_engine, guests=[("Ana", 0.9)],
+                                  contacts=[("email", "a@b.com"), ("handle", "@ana")])
+    c1, c2 = _contact_ids(api_engine, video_id)
+    _mark_contacts(api_engine, video_id, guest_candidate_id=g1)
+    with Session(api_engine) as s:
+        luis = Guest(full_name="Luis")
+        s.add(luis)
+        s.commit()
+        s.add(Participation(guest_id=luis.id, video_id=video_id))
+        s.commit()
+
+    video = api_client.get("/staging/review/videos").json()["items"][0]
+    by_id = {c["id"]: c for c in video["contact_candidates"]}
+    assert by_id[c1]["suggested_contact_type_id"] == types["Correo"]    # email ~ Correo
+    assert by_id[c2]["suggested_contact_type_id"] is None               # un handle no se adivina
+    assert by_id[c1]["guest_candidate_id"] == g1
+    assert [p["full_name"] for p in video["participants"]] == ["Luis"]
 
 
 # --- programa y conductores sugeridos --------------------------------------------------------

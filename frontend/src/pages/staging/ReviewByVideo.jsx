@@ -4,7 +4,7 @@ import { api } from "../../api/client.js";
 import Pager from "../../components/Pager.jsx";
 import { useCatalog } from "../../hooks/useCatalog.js";
 import { dateOnly, youtubeUrl } from "../videos/labels.js";
-import { confidencePercent } from "./labels.js";
+import { canCreateTypeFrom, confidencePercent, matchRelationshipId, sameName, typeNameFromHint } from "./labels.js";
 
 // Los filtros de la barra superior; cada uno muestra cuántos videos tiene.
 const FILTERS = [
@@ -13,6 +13,10 @@ const FILTERS = [
   { key: "doubtful_contacts", label: "Contactos dudosos", empty: "No hay videos con contactos dudosos por revisar." },
   { key: "no_candidates", label: "Sin candidatos", empty: "No hay videos sin candidatos." },
   { key: "no_guests", label: "Sin invitados", empty: 'No hay videos marcados "sin invitados".' },
+  // Posibles intros: salen de Pendientes y de los demás filtros hasta que se revisan aquí.
+  { key: "short", label: "Cortos (< 1 min)", empty: "No hay videos cortos por revisar." },
+  // Avance: videos con invitados ya aceptados (se corrigen desde la ficha de cada invitado).
+  { key: "reviewed", label: "Revisados", empty: "Todavía no hay videos revisados con invitados." },
 ];
 
 const cleanName = (text) => text.trim().replace(/\s+/g, " ");
@@ -33,6 +37,8 @@ export default function ReviewByVideo() {
   const [error, setError] = useState("");
   const programs = useCatalog("programs");
   const hosts = useCatalog("hosts");
+  const contactTypes = useCatalog("contact-types");
+  const relationships = useCatalog("contact-relationships");
 
   const load = useCallback(() => {
     setError("");
@@ -109,7 +115,16 @@ export default function ReviewByVideo() {
       {data && data.total === 0 && <p className="muted">{current.empty}</p>}
 
       {data?.items?.map((video) => (
-        <VideoReviewCard key={video.id} video={video} programs={programs.items} hosts={hosts.items} onResolved={load} />
+        <VideoReviewCard
+          key={video.id}
+          video={video}
+          programs={programs.items}
+          hosts={hosts.items}
+          contactTypes={contactTypes.items}
+          relationships={relationships.items}
+          onTypeCreated={contactTypes.reload}
+          onResolved={load}
+        />
       ))}
 
       {data && data.total > 0 && (
@@ -119,7 +134,27 @@ export default function ReviewByVideo() {
   );
 }
 
-function VideoReviewCard({ video, programs, hosts, onResolved }) {
+// Invitado de la tarjeta al que la IA asignó el contacto, como referencia del selector:
+// `cand:<id>` (candidato de invitado), `guest:<id>` (ya participa en el video) o "" (sin asignar).
+function initialGuestRef(contact, video) {
+  const candidate =
+    video.guest_candidates.find((g) => g.id === contact.guest_candidate_id) ??
+    (contact.guest_name ? video.guest_candidates.find((g) => sameName(g.extracted_name, contact.guest_name)) : null);
+  if (candidate) return `cand:${candidate.id}`;
+  const participant = contact.guest_name ? video.participants?.find((p) => sameName(p.full_name, contact.guest_name)) : null;
+  return participant ? `guest:${participant.id}` : "";
+}
+
+// `cand:7` -> { guest_candidate_id: 7 }; `added:Ana` -> { added_guest_name: "Ana" }; `guest:3` -> { existing_guest_id: 3 }
+function guestReference(ref) {
+  const [kind, ...rest] = ref.split(":");
+  const value = rest.join(":");
+  if (kind === "cand") return { guest_candidate_id: Number(value) };
+  if (kind === "added") return { added_guest_name: value };
+  return { existing_guest_id: Number(value) };
+}
+
+function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, onTypeCreated, onResolved }) {
   // Cada candidato es una fila editable; "Quitar" lo marca para rechazarlo.
   const [rows, setRows] = useState(() =>
     video.guest_candidates.map((c) => ({ candidate: c, name: c.extracted_name, removed: false }))
@@ -132,6 +167,20 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
   const [newHost, setNewHost] = useState("");
   // Nombres que la ingesta no pudo clasificar: el humano decide "→ invitado" o "→ conductor".
   const [doubtful, setDoubtful] = useState(video.doubtful_names ?? []);
+  // Contactos del video: se aceptan (con tipo, invitado y relación) o se descartan. Los dudosos, o
+  // sin invitado, empiezan desmarcados: hay que marcarlos a propósito.
+  const [contactRows, setContactRows] = useState(() =>
+    video.contact_candidates.map((c) => {
+      const ref = initialGuestRef(c, video);
+      return {
+        candidate: c,
+        accept: !c.doubtful && ref !== "",
+        typeId: c.suggested_contact_type_id ? String(c.suggested_contact_type_id) : "",
+        relationshipId: null,   // null = la que propuso la IA, cuando el catálogo ya cargó
+        ref,
+      };
+    })
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -141,6 +190,59 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
   const canDiscard = !hasGuests && removedRows.length > 0;
   const hasMeta = Boolean(programId) || hostNames.length > 0;
   const hostsWithoutProgram = hostNames.length > 0 && !programId;
+
+  // Invitados a los que se puede asignar un contacto: los que se conservan, los agregados a mano y
+  // los que ya participan en el video.
+  const guestOptions = [
+    ...keptRows.map((r) => ({ value: `cand:${r.candidate.id}`, label: r.name.trim() || r.candidate.extracted_name })),
+    ...added.map((name) => ({ value: `added:${name}`, label: name })),
+    ...(video.participants ?? []).map((p) => ({ value: `guest:${p.id}`, label: `${p.full_name} (ya registrado)` })),
+  ];
+  const validRefs = new Set(guestOptions.map((o) => o.value));
+  // Un contacto apuntado a un invitado que se quitó queda sin asignar.
+  const refOf = (row) => (validRefs.has(row.ref) ? row.ref : "");
+  const relationshipOf = (row) => row.relationshipId ?? matchRelationshipId(relationships, row.candidate.relationship_name);
+
+  function setContact(index, patch) {
+    setContactRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  }
+
+  // Crear un tipo de contacto nuevo lo decide quien revisa, con un clic (la IA nunca lo crea sola).
+  async function createType(index) {
+    setError("");
+    setBusy(true);
+    try {
+      const created = await api.post("/contact-types", { name: typeNameFromHint(contactRows[index].candidate.type_hint) });
+      setContact(index, { typeId: String(created.id) });
+      onTypeCreated();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Decisión sobre los contactos; null (con el error mostrado) si falta tipo o invitado en alguno aceptado.
+  function contactsPayload() {
+    if (contactRows.length === 0) return {};
+    const accepted = contactRows.filter((r) => r.accept);
+    if (accepted.some((r) => !r.typeId || !refOf(r))) {
+      setError("Elige el tipo y el invitado de cada contacto que aceptas");
+      return null;
+    }
+    return {
+      contacts: accepted.map((r) => {
+        const relationshipId = relationshipOf(r);
+        return {
+          candidate_id: r.candidate.id,
+          contact_type_id: Number(r.typeId),
+          ...(relationshipId ? { relationship_id: Number(relationshipId) } : {}),
+          ...guestReference(refOf(r)),
+        };
+      }),
+      reject_contact_ids: contactRows.filter((r) => !r.accept).map((r) => r.candidate.id),
+    };
+  }
 
   function setName(index, name) {
     setRows((prev) => prev.map((r, i) => (i === index ? { ...r, name } : r)));
@@ -206,7 +308,10 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
       setError("Ningún invitado puede quedar sin nombre");
       return;
     }
+    const contacts = contactsPayload();
+    if (contacts === null) return;
     send({
+      ...contacts,
       guests: keptRows.map((r) => {
         const name = cleanName(r.name);
         const item = { candidate_id: r.candidate.id };
@@ -227,7 +332,9 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
       ? "Descartar candidatos"
       : hasMeta
         ? "Guardar programa y conductores"
-        : null;
+        : contactRows.length > 0
+          ? "Guardar contactos"
+          : null;
 
   return (
     <article className="review-card" aria-label={video.title}>
@@ -246,31 +353,6 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
           </details>
         ) : (
           <p className="muted">Sin descripción.</p>
-        )}
-        {video.contact_candidates.length > 0 && (
-          <div className="video-contacts">
-            <p className="muted">
-              {video.contact_candidates.length === 1 ? "1 contacto candidato" : `${video.contact_candidates.length} contactos candidatos`} ·{" "}
-              <Link to="/staging/contact-candidates">Revisar contactos</Link>
-            </p>
-            <ul className="contact-list" aria-label="Contactos candidatos">
-              {video.contact_candidates.map((c) => (
-                <li key={c.id}>
-                  <span>
-                    <strong>{c.type_hint}:</strong> {c.value}
-                  </span>
-                  {c.relationship_name && <span className="badge info">{c.relationship_name}</span>}
-                  {c.doubtful && (
-                    <span className="badge warn" title={c.doubtful_reason || undefined}>
-                      Dudoso{c.doubtful_reason ? `: ${c.doubtful_reason}` : ""}
-                    </span>
-                  )}
-                  {c.guest_name && <small className="muted">asignado a {c.guest_name}</small>}
-                  {c.evidence && <blockquote className="evidence">{c.evidence}</blockquote>}
-                </li>
-              ))}
-            </ul>
-          </div>
         )}
       </div>
 
@@ -370,7 +452,21 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
         )}
 
         <strong>Invitados</strong>
-        {rows.length === 0 && added.length === 0 && <p className="muted">La extracción no encontró invitados.</p>}
+        {(video.participants ?? []).length > 0 && (
+          <div className="registered-guests">
+            <small className="muted">Ya registrados en este video:</small>
+            <ul className="chips" aria-label="Invitados registrados">
+              {video.participants.map((p) => (
+                <li key={p.id}>
+                  <Link to={`/guests/${p.id}`}>{p.full_name}</Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {rows.length === 0 && added.length === 0 && (video.participants ?? []).length === 0 && (
+          <p className="muted">La extracción no encontró invitados.</p>
+        )}
         <ul className="guest-rows">
           {rows.map((row, index) => (
             <li key={row.candidate.id} className={row.removed ? "guest-row removed" : "guest-row"}>
@@ -429,6 +525,90 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
           </button>
         </div>
 
+        {contactRows.length > 0 && (
+          <div className="contacts-field">
+            <strong>Contactos</strong>
+            <small className="muted">
+              Marca «Aceptar» en los correctos. Los dudosos empiezan sin marcar; los que queden sin marcar se
+              descartan al guardar.
+            </small>
+            <ul className="contact-list" aria-label="Contactos del video">
+              {contactRows.map((row, index) => {
+                const c = row.candidate;
+                return (
+                  <li key={c.id} className={row.accept ? "contact-row-card" : "contact-row-card off"}>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={row.accept}
+                        aria-label={`Aceptar contacto ${c.value}`}
+                        onChange={(e) => setContact(index, { accept: e.target.checked })}
+                        disabled={busy}
+                      />
+                      <span className="contact-value">
+                        <strong>{c.type_hint}:</strong> {c.value}
+                      </span>
+                    </label>
+                    {c.doubtful && (
+                      <span className="badge warn" title={c.doubtful_reason || undefined}>
+                        Dudoso{c.doubtful_reason ? `: ${c.doubtful_reason}` : ""}
+                      </span>
+                    )}
+                    <div className="contact-selects">
+                      <select
+                        aria-label={`Tipo de ${c.value}`}
+                        value={row.typeId}
+                        onChange={(e) => setContact(index, { typeId: e.target.value })}
+                        disabled={busy}
+                      >
+                        <option value="">— Tipo —</option>
+                        {contactTypes.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label={`Invitado de ${c.value}`}
+                        value={refOf(row)}
+                        onChange={(e) => setContact(index, { ref: e.target.value })}
+                        disabled={busy}
+                      >
+                        <option value="">— Sin asignar —</option>
+                        {guestOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        aria-label={`Relación de ${c.value}`}
+                        value={relationshipOf(row)}
+                        onChange={(e) => setContact(index, { relationshipId: e.target.value })}
+                        disabled={busy}
+                      >
+                        <option value="">— Relación —</option>
+                        {relationships.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                      {!row.typeId && canCreateTypeFrom(c.type_hint) && (
+                        <button type="button" className="quick" onClick={() => createType(index)} disabled={busy}>
+                          + Crear tipo «{typeNameFromHint(c.type_hint)}»
+                        </button>
+                      )}
+                    </div>
+                    {!row.accept && <small className="muted">Se descartará al guardar</small>}
+                    {c.evidence && <blockquote className="evidence">{c.evidence}</blockquote>}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
         {error && (
           <p role="alert" className="error">
             {error}
@@ -440,7 +620,7 @@ function VideoReviewCard({ video, programs, hosts, onResolved }) {
               {primaryLabel}
             </button>
           )}
-          {video.guest_status !== "no_guests" && (
+          {video.guest_status === "pending" && (
             <button type="button" onClick={markNoGuests} disabled={busy || added.length > 0 || hostsWithoutProgram}>
               Sin invitados
             </button>

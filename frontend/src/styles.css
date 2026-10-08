@@ -549,6 +549,33 @@ button.danger {
   margin-left: 0;
 }
 
+.contacts-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.contact-row-card.off {
+  opacity: 0.75;
+  border-style: dashed;
+}
+
+.contact-selects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex-basis: 100%;
+}
+
+.contact-selects select {
+  flex: 1;
+  min-width: 9rem;
+}
+
+.contact-value {
+  overflow-wrap: anywhere;
+}
+
 blockquote.evidence {
   flex-basis: 100%;
   margin: 0.25rem 0 0;

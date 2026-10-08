@@ -176,6 +176,8 @@ class ReviewVideoOut(BaseModel):
     published_at: datetime | None
     guest_status: str
     possible_duplicate_of_video_id: int | None
+    # Solo la copia de un par de duplicados (la que no se conserva); el original no lo es.
+    is_duplicate_copy: bool = False
     # Programa ya asignado al video, y lo que propone la ingesta (programa del catálogo y
     # conductores). Los conductores son del programa: `program_host_names` son los que ya tiene.
     program_id: int | None = None

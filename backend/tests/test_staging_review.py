@@ -90,9 +90,62 @@ def test_counts_per_filter(api_client, api_engine):
     _seed_video(api_engine, "v5", "Duplicado", duplicate_of=original, guests=[("Ana", 0.5)])
 
     assert api_client.get("/staging/review/counts").json() == {
-        "pending": 2, "with_contacts": 1, "doubtful_contacts": 0, "no_candidates": 1,
+        # "Duplicado" es la copia de "Con invitados": no cuenta en nada salvo en duplicados.
+        "pending": 1, "with_contacts": 1, "doubtful_contacts": 0, "no_candidates": 1,
         "no_guests": 1, "duplicates": 1,
     }
+
+
+def _titles(api_client, name):
+    body = api_client.get("/staging/review/videos", params={"filter": name}).json()
+    return sorted(v["title"] for v in body["items"])
+
+
+def test_de_un_par_con_celular_se_conserva_el_que_no_lo_tiene(api_client, api_engine):
+    normal, _ = _seed_video(api_engine, "v1", "Con las Estrellas", guests=[("Ana", 0.5)])
+    movil, _ = _seed_video(api_engine, "v2", "Con las Estrellas 📱", guests=[("Ana", 0.5)],
+                           duplicate_of=normal)
+    with Session(api_engine) as s:   # la ingesta los marca entre sí
+        s.get(Video, normal).possible_duplicate_of_video_id = movil
+        s.commit()
+
+    assert _titles(api_client, "pending") == ["Con las Estrellas"]
+    assert _titles(api_client, "duplicates") == ["Con las Estrellas 📱"]
+    counts = api_client.get("/staging/review/counts").json()
+    assert counts["pending"] == 1 and counts["duplicates"] == 1
+
+
+def test_de_un_par_igual_se_conserva_el_de_menor_id(api_client, api_engine):
+    primero, _ = _seed_video(api_engine, "v1", "Mismo título", guests=[("Ana", 0.5)])
+    segundo, _ = _seed_video(api_engine, "v2", "Mismo título", guests=[("Ana", 0.5)],
+                             duplicate_of=primero)
+    with Session(api_engine) as s:
+        s.get(Video, primero).possible_duplicate_of_video_id = segundo
+        s.commit()
+
+    body = api_client.get("/staging/review/videos").json()
+    assert [v["id"] for v in body["items"]] == [primero]
+    assert body["items"][0]["is_duplicate_copy"] is False   # el original no lleva el aviso
+    copies = api_client.get("/staging/review/videos", params={"filter": "duplicates"}).json()
+    assert [v["id"] for v in copies["items"]] == [segundo]
+    assert copies["items"][0]["is_duplicate_copy"] is True
+
+
+def test_la_copia_no_se_borra_y_conserva_sus_candidatos(api_client, api_engine):
+    original, _ = _seed_video(api_engine, "v1", "Original", guests=[("Ana", 0.5)])
+    copia, candidates = _seed_video(api_engine, "v2", "Original 📱", guests=[("Ana", 0.5)],
+                                    duplicate_of=original)
+    with Session(api_engine) as s:
+        s.get(Video, original).possible_duplicate_of_video_id = copia
+        s.commit()
+    assert _status(api_engine, candidates[0]) == "pending"   # sigue ahí, solo no se muestra
+    assert api_client.get(f"/videos/{copia}").status_code == 200
+
+
+def test_un_duplicado_marcado_solo_en_un_sentido_tambien_oculta_la_copia(api_client, api_engine):
+    original, _ = _seed_video(api_engine, "v1", "Serie: Uno", guests=[("Ana", 0.5)])
+    _seed_video(api_engine, "v2", "Serie: Uno 📱", guests=[("Ana", 0.5)], duplicate_of=original)
+    assert _titles(api_client, "pending") == ["Serie: Uno"]
 
 
 def _mark_contacts(engine, video_id, **fields) -> None:
@@ -137,7 +190,7 @@ def test_each_filter_returns_its_videos(api_client, api_engine):
 
     assert titles("pending") == ["Con invitados"]
     assert titles("with_contacts") == ["Solo contacto"]
-    assert titles("no_candidates") == ["Duplicado", "Sin candidatos"]
+    assert titles("no_candidates") == ["Sin candidatos"]   # "Duplicado" es una copia: no se revisa
     assert titles("no_guests") == ["Sin invitados"]
     assert titles("duplicates") == ["Duplicado"]
 

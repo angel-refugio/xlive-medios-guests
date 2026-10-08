@@ -8,8 +8,8 @@ humano lo apruebe. Un video entra a la revisión cuando ya lo procesó la ingest
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import exists, func, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from app.models.catalogs import Host, Program
 from app.models.guest import Guest
@@ -61,6 +61,30 @@ def _pending_suggestion_exists():
     )
 
 
+MOBILE_MARK = "📱"
+
+
+def _duplicate_copy_clause():
+    """El video es la COPIA de un par de posibles duplicados y no la que se conserva.
+
+    El canal sube el mismo video dos veces, una con 📱 al final del título, y la ingesta marca cada
+    uno como duplicado del otro. Se conserva el que no tiene 📱; si los dos son iguales en eso, el
+    de menor id. La copia no se borra: sale de la cola de revisión y se consulta en "Posibles
+    duplicados".
+    """
+    original = aliased(Video)
+    mobile = Video.title.contains(MOBILE_MARK)
+    original_mobile = original.title.contains(MOBILE_MARK)
+    return exists().where(
+        original.id == Video.possible_duplicate_of_video_id,
+        or_(
+            and_(mobile, ~original_mobile),
+            and_(or_(and_(mobile, original_mobile), and_(~mobile, ~original_mobile)),
+                 Video.id > original.id),
+        ),
+    )
+
+
 def _filter_clause(review_filter: str):
     if review_filter == "pending":
         # Pendiente = invitados candidatos o una sugerencia de programa/conductores sin revisar.
@@ -81,7 +105,7 @@ def _filter_clause(review_filter: str):
     if review_filter == "no_guests":
         return Video.guest_status == "no_guests"
     if review_filter == "duplicates":
-        return Video.possible_duplicate_of_video_id.is_not(None)
+        return _duplicate_copy_clause()
     msg = f"Filtro de revisión desconocido: {review_filter!r}"
     logger.error("[app.services.staging_review._filter_clause] %s", msg)
     raise ReviewInputError(msg)
@@ -89,6 +113,8 @@ def _filter_clause(review_filter: str):
 
 def _base_filters(review_filter: str, q: str | None) -> list:
     filters = [Video.last_ingested_at.is_not(None), _filter_clause(review_filter)]
+    if review_filter != "duplicates":
+        filters.append(~_duplicate_copy_clause())   # las copias no se revisan
     if q and q.strip():
         filters.append(Video.title.ilike(f"%{q.strip()}%"))
     return filters
@@ -117,6 +143,9 @@ def list_review_videos(
         .limit(page_size).offset((page - 1) * page_size)
     ).scalars())
     ids = [v.id for v in videos]
+    copy_ids = set(db.execute(
+        select(Video.id).where(Video.id.in_(ids), _duplicate_copy_clause())
+    ).scalars()) if ids else set()
 
     guests_by_video: dict[int, list] = {i: [] for i in ids}
     contacts_by_video: dict[int, list] = {i: [] for i in ids}
@@ -183,6 +212,7 @@ def list_review_videos(
             "description": v.description, "published_at": v.published_at,
             "guest_status": v.guest_status,
             "possible_duplicate_of_video_id": v.possible_duplicate_of_video_id,
+            "is_duplicate_copy": v.id in copy_ids,
             "program_id": v.program_id,
             "suggested_program_id": suggested_id,
             "suggested_host_names": suggested_hosts,

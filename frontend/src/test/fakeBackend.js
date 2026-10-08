@@ -378,6 +378,14 @@ export function createFakeBackend({
     }
 
     // ---- Revisión por video (se consideran "ingeridos" los videos con source "youtube") ----
+    // Misma regla que el backend: de un par se conserva el que no tiene 📱 y, si son iguales, el de menor id.
+    const isDuplicateCopy = (v) => {
+      const original = db.videos.find((o) => o.id === v.possible_duplicate_of_video_id);
+      if (!original) return false;
+      const mobile = v.title.includes("📱");
+      const originalMobile = original.title.includes("📱");
+      return (mobile && !originalMobile) || (mobile === originalMobile && v.id > original.id);
+    };
     const pendingGuests = (videoId) => db.guestCandidates.filter((c) => c.video_id === videoId && c.status === "pending");
     const pendingContacts = (videoId) => db.contactCandidates.filter((c) => c.video_id === videoId && c.status === "pending");
     const pendingSuggestion = (videoId) => db.suggestions.find((s) => s.video_id === videoId && (s.status ?? "pending") === "pending");
@@ -388,11 +396,11 @@ export function createFakeBackend({
       no_candidates: (v) =>
         pendingGuests(v.id).length === 0 && pendingContacts(v.id).length === 0 && !pendingSuggestion(v.id) && v.guest_status === "pending",
       no_guests: (v) => v.guest_status === "no_guests",
-      duplicates: (v) => Boolean(v.possible_duplicate_of_video_id),
+      duplicates: (v) => isDuplicateCopy(v),
     };
     const reviewVideos = (filter, q) =>
       db.videos
-        .filter((v) => v.source === "youtube" && reviewFilters[filter](v))
+        .filter((v) => v.source === "youtube" && reviewFilters[filter](v) && (filter === "duplicates" || !isDuplicateCopy(v)))
         .filter((v) => !q || v.title.toLowerCase().includes(q.toLowerCase()));
 
     if (pathname === "/staging/review/counts" && method === "GET") {
@@ -417,6 +425,7 @@ export function createFakeBackend({
             published_at: v.published_at ?? null,
             guest_status: v.guest_status,
             possible_duplicate_of_video_id: v.possible_duplicate_of_video_id ?? null,
+            is_duplicate_copy: isDuplicateCopy(v),
             program_id: v.program?.id ?? null,
             suggested_program_id: suggestedProgram?.id ?? null,
             suggested_host_names: suggestion?.host_names ?? [],

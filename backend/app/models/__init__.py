@@ -1,6 +1,7 @@
 """Importa todos los modelos para que queden registrados en Base.metadata."""
 from app.models.catalogs import (
     Borough,
+    ContactRelationship,
     ContactType,
     GuestCategory,
     Host,
@@ -25,6 +26,7 @@ __all__ = [
     "User",
     "Borough",
     "Contact",
+    "ContactRelationship",
     "ContactType",
     "Guest",
     "GuestCategory",

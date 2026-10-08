@@ -45,7 +45,7 @@ DEFAULT_OUT_DIR = DATA_DIR / "pilot"        # v1; las demás versiones usan data
 DEFAULT_EVAL_DIR = DATA_DIR / "eval"
 DEFAULT_MODEL = "sonnet"
 TIMEOUT_SECONDS = 900
-CANDIDATE_VERSIONS = ("v5",)   # versiones donde la regex saca los contactos y Claude solo los asocia
+CANDIDATE_VERSIONS = claude_extraction.REGEX_CONTACT_VERSIONS
 PARSE_ATTEMPTS = 2   # si Claude devuelve un JSON inválido se reintenta una vez
 
 

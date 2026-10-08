@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 # v5 = los contactos los saca la regex y Claude solo los asocia (ver contact_candidates): mismos
 # nombres que v3 dentro del ruido, pero contactos estables entre corridas. Es la versión por defecto.
 INSTRUCTIONS_VERSIONS = ("v1", "v2", "v3", "v4", "v5")
+# Versiones donde la regex saca los contactos y Claude solo los asocia (ver contact_candidates).
+REGEX_CONTACT_VERSIONS = ("v5",)
 INSTRUCTIONS_VERSION = "v5"
 PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 INSTRUCTIONS_PATH = PROMPTS_DIR / f"extraction_instructions_{INSTRUCTIONS_VERSION}.md"

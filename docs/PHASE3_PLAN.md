@@ -455,17 +455,38 @@ Solo documentación: no hay código, migración ni pruebas de esto todavía. Res
 - Relación: catálogo pequeño y editable (propio, mánager, patrocinador). Patrocinador y mánager
   son contactos DEL invitado, no entidades ni registros nuevos.
 - Restricción única por invitado + tipo + valor normalizado.
-- Cambios contra el modelo actual (`contacts`, `staging_contact_candidates`), definidos aquí y por
-  implementar: `contacts.guest_id` pasa a admitir NULL (sin asignar) y, al rechazar un invitado,
-  sus contactos no se borran en cascada sino que quedan sin asignar; se agregan valor normalizado,
-  relación, video de origen y evidencia; `source` pasa a `manual` / `youtube_description` (hoy
-  `manual` / `video_description`); la bandera `verified` se reemplaza por `status`
-  (`candidate` / `validated` / `rejected`); el patrocinador y el mánager dejan de ser tipos de
-  contacto y pasan a ser relación. Los contactos manuales entran validados; los aceptados desde
-  la ingesta pasan a `validated` (ya no `verified = false`). Los candidatos de contacto de
-  staging se alinean con esta tabla (evidencia, dudoso con motivo, rechazados recordados); el
-  detalle de si una sola tabla los reemplaza se decide al diseñar la migración. Sin migración ni
-  código todavía.
+- **Implementado en la migración 0010 (2026-10-07; la corre el usuario con `alembic upgrade head`):**
+  - `contacts.guest_id` admite NULL (contacto sin asignar, reasignable) y se agregan
+    `normalized_value` (se llena solo al asignar `value`), `relationship_id`, `video_id`,
+    `evidence` y `status` (`candidate` / `validated` / `rejected`; todo lo existente queda
+    `validated`), con restricción única por invitado + tipo + valor normalizado. La API responde
+    409 si se intenta repetir un contacto.
+  - Catálogo nuevo `contact_relationships` (propio, manager, patrocinador), editable desde la API
+    en `/contact-relationships`. El patrocinador y el mánager son relación del contacto, no tipo.
+  - Una sola vía de staging: `staging_contact_candidates` se amplía (valor normalizado, relación
+    propuesta, evidencia, dudoso con motivo, invitado asignado por la IA y posible invitado no
+    detectado) en lugar de reemplazarla; los rechazados se recuerdan ahí mismo. Los tres tipos de
+    candidato guardan `extractor` (`claude_code` / `claude_api`; vacío = pipeline anterior de
+    Ollama) e `instructions_version`.
+  - Decisiones deliberadas para no romper la app actual: `verified` se conserva junto a `status`
+    y `source` sigue siendo `manual` / `video_description` (equivale al `youtube_description` de
+    las decisiones). Quitar `verified` y renombrar el origen tocan la API, la interfaz y sus
+    pruebas: quedan para cuando se rediseñe la revisión de contactos.
+  - Falta (Staging Review): revisar contactos por separado del invitado, el filtro "con contactos
+    dudosos", reasignar un contacto sin asignar y que al aceptar un contacto se llenen
+    `relationship_id`, `video_id` y `evidence`.
+
+**Importador a staging (mismo para Claude Code y para la API)**
+- `app/services/claude_import.py` recibe resultados ya validados (`VideoExtraction`) y los guarda
+  como candidatos; no distingue de dónde vinieron, solo registra el origen. Reimportar un video
+  reemplaza sus candidatos pendientes y respeta lo aceptado o rechazado.
+- Modo Claude Code: `python -m scripts.import_claude_results` lee la carpeta de lotes que dejó
+  `run_claude_pilot` (`--dry-run` simula; `--create-missing` crea los videos de `data/samples` si
+  aún no están en la BD). Modo API: el extractor por API entregará el mismo `BatchExtraction` a
+  `import_batch` con `extractor="claude_api"` (falta la API key).
+- El programa solo se asigna si existe en el catálogo; si no, queda como programa propuesto
+  (`new_program_name`). Un contacto con tipo que no está en el catálogo, o cuyo invitado no tiene
+  candidato, queda dudoso con su motivo.
 
 **Piloto con Claude Code (2026-10-07): instrucciones v5, la regex extrae y Claude asocia**
 - Los contactos del texto (links, correos, @handles y teléfonos) los saca siempre la regex

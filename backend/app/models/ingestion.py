@@ -94,6 +94,10 @@ class StagingGuestCandidate(Base):
     adjusted_confidence: Mapped[float] = mapped_column(Float)
     evidence: Mapped[str] = mapped_column(Text)
     extraction_method: Mapped[str] = mapped_column(String(10))
+    # Origen del candidato: 'claude_code' o 'claude_api' (null = pipeline anterior de Ollama) y la
+    # versión de las instrucciones que lo produjo.
+    extractor: Mapped[str | None] = mapped_column(String(20))
+    instructions_version: Mapped[str | None] = mapped_column(String(20))
 
     status: Mapped[str] = mapped_column(String(20), server_default="pending", default="pending")
     # Se llena al aceptar (crea o vincula un Guest existente); nunca antes.
@@ -137,6 +141,22 @@ class StagingContactCandidate(Base):
     value: Mapped[str] = mapped_column(String(500))
     raw_confidence: Mapped[float] = mapped_column(Float)
     extraction_method: Mapped[str] = mapped_column(String(10))
+    # Forma comparable del valor (ver `normalize_contact_value`): evita proponer dos veces lo mismo
+    # y recuerda los rechazados al reprocesar el video.
+    normalized_value: Mapped[str | None] = mapped_column(String(500))
+    # Relación que propone la IA ("propio" / "manager" / "patrocinador"); se empareja con el
+    # catálogo `contact_relationships` al revisar.
+    relationship_name: Mapped[str | None] = mapped_column(String(30))
+    evidence: Mapped[str | None] = mapped_column(Text)
+    # Dudoso: queda visible con su motivo y hay un filtro "con contactos dudosos".
+    doubtful: Mapped[bool] = mapped_column(server_default="false", default=False)
+    doubtful_reason: Mapped[str | None] = mapped_column(String(300))
+    # Nombre del invitado que la IA le asignó (puede no tener candidato) y, si no coincide con el
+    # invitado del video, el posible invitado no detectado.
+    guest_name: Mapped[str | None] = mapped_column(String(255))
+    possible_guest_name: Mapped[str | None] = mapped_column(String(255))
+    extractor: Mapped[str | None] = mapped_column(String(20))
+    instructions_version: Mapped[str | None] = mapped_column(String(20))
 
     status: Mapped[str] = mapped_column(String(20), server_default="pending", default="pending")
     linked_contact_id: Mapped[int | None] = mapped_column(
@@ -174,6 +194,10 @@ class StagingVideoSuggestion(Base):
     doubtful_names: Mapped[list[dict]] = mapped_column(JSON, default=list, server_default="[]")
     # Conductores que se repiten en la serie pero el texto del video no menciona (un clic).
     usual_host_names: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    # Programa propuesto que NO está en el catálogo (el humano decide si lo crea).
+    new_program_name: Mapped[str | None] = mapped_column(String(150))
+    extractor: Mapped[str | None] = mapped_column(String(20))
+    instructions_version: Mapped[str | None] = mapped_column(String(20))
 
     status: Mapped[str] = mapped_column(String(20), server_default="pending", default="pending")
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

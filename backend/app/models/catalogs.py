@@ -35,6 +35,12 @@ class ContactType(CatalogMixin, Base):
     __tablename__ = "contact_types"
 
 
+class ContactRelationship(CatalogMixin, Base):
+    """Relación del contacto con el invitado: propio, mánager, patrocinador (catálogo editable)."""
+
+    __tablename__ = "contact_relationships"
+
+
 class Host(CatalogMixin, Base):
     """Conductor: quien presenta un programa (no es un invitado)."""
 

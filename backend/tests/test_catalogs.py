@@ -14,7 +14,10 @@ from app.services.users import create_admin
 import app.models  # noqa: F401
 
 PASSWORD = "clave-segura-123"
-PREFIXES = ["/guest-categories", "/boroughs", "/video-types", "/contact-types", "/programs", "/hosts"]
+PREFIXES = [
+    "/guest-categories", "/boroughs", "/video-types", "/contact-types", "/programs", "/hosts",
+    "/contact-relationships",
+]
 
 
 @pytest.fixture(autouse=True)

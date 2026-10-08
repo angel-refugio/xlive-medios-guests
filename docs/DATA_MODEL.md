@@ -146,12 +146,17 @@ Relación N↔N Guest–GuestCategory. Clave primaria compuesta (`guest_id`, `ca
 - `source`: `manual` o `video_description`. `verified` indica validación humana.
 - El patrocinador es un contacto de tipo "patrocinador" con valor y `note` (ej. nombre de la empresa).
 - Nunca se inventan valores.
-- **Modelo objetivo (decidido el 2026-10-07, aún sin migración)**: `guest_id` admite NULL (contacto
-  sin asignar), más valor normalizado, relación (propio / mánager / patrocinador, catálogo
-  editable), video de origen, evidencia, `status` (`candidate` / `validated` / `rejected`) y
-  `source` `manual` / `youtube_description`; único por invitado + tipo + valor normalizado. El
-  patrocinador y el mánager pasan de tipo a relación. Detalle en la adenda de contactos de
-  `PHASE3_PLAN.md`; lo de arriba describe el estado actual.
+- **Modelo de contactos (migración 0010, 2026-10-07)**: `guest_id` admite NULL (contacto sin
+  asignar) y se agregan `normalized_value`, `relationship_id` (catálogo `contact_relationships`:
+  propio / manager / patrocinador), `video_id` (origen), `evidence` y `status` (`candidate` /
+  `validated` / `rejected`, por defecto `validated`); único por invitado + tipo + valor normalizado.
+  `verified` y `source = video_description` se conservan por compatibilidad. El patrocinador y el
+  mánager son relación del contacto, no tipo. Detalle en la adenda de contactos de `PHASE3_PLAN.md`.
+- **`contact_relationships`**: catálogo igual a los demás (`name` único, `is_active`).
+- **Staging**: `staging_contact_candidates` suma `normalized_value`, `relationship_name`, `evidence`,
+  `doubtful` / `doubtful_reason`, `guest_name` y `possible_guest_name`; los tres tipos de candidato
+  y `staging_video_suggestions` suman `extractor` e `instructions_version`, y las sugerencias
+  `new_program_name` (programa propuesto fuera del catálogo).
 
 ### videos
 - `youtube_video_id` único: evita ingesta duplicada. Los metadatos de YouTube viven en columnas propias del video, separados de las entidades de dominio (invitados, participaciones).

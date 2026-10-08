@@ -18,6 +18,8 @@ router = APIRouter(
 def _http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, (GuestNotFoundError, service.ContactNotFoundError)):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, service.ContactDuplicateError):
+        return HTTPException(status_code=409, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
 
 
@@ -33,7 +35,7 @@ def list_contacts(guest_id: int, db: Session = Depends(get_db)):
 def create_contact(guest_id: int, data: ContactCreate, db: Session = Depends(get_db)):
     try:
         return service.create_contact(db, guest_id, data)
-    except (GuestNotFoundError, InvalidReferenceError) as exc:
+    except (GuestNotFoundError, InvalidReferenceError, service.ContactDuplicateError) as exc:
         raise _http_error(exc)
 
 
@@ -51,7 +53,10 @@ def update_contact(
 ):
     try:
         return service.update_contact(db, guest_id, contact_id, data)
-    except (GuestNotFoundError, service.ContactNotFoundError, InvalidReferenceError) as exc:
+    except (
+        GuestNotFoundError, service.ContactNotFoundError, InvalidReferenceError,
+        service.ContactDuplicateError,
+    ) as exc:
         raise _http_error(exc)
 
 

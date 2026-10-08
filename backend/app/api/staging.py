@@ -14,7 +14,7 @@ from app.schemas.staging import (
 from app.services import staging as service
 from app.services import staging_review as review_service
 from app.services.videos import VideoNotFoundError
-from app.services.contacts import ContactNotFoundError
+from app.services.contacts import ContactDuplicateError, ContactNotFoundError
 from app.services.guests import GuestNotFoundError, InvalidReferenceError
 from app.services.participations import ParticipationDuplicateError
 
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/staging", tags=["staging"], dependencies=[Depends(re
 _KNOWN_ERRORS = (
     GuestNotFoundError, ContactNotFoundError, service.StagingCandidateNotFoundError,
     service.StagingCandidateAlreadyReviewedError, InvalidReferenceError, ParticipationDuplicateError,
-    VideoNotFoundError, review_service.ReviewInputError,
+    VideoNotFoundError, review_service.ReviewInputError, ContactDuplicateError,
 )
 
 
@@ -33,7 +33,7 @@ def _http_error(exc: Exception) -> HTTPException:
         VideoNotFoundError,
     )):
         return HTTPException(status_code=404, detail=str(exc))
-    if isinstance(exc, service.StagingCandidateAlreadyReviewedError):
+    if isinstance(exc, (service.StagingCandidateAlreadyReviewedError, ContactDuplicateError)):
         return HTTPException(status_code=409, detail=str(exc))
     return HTTPException(status_code=422, detail=str(exc))
 

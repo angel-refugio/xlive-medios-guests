@@ -19,6 +19,10 @@ frontend/dist/
 # Muestras de videos de YouTube (datos locales de análisis)
 backend/data/
 
+# Respuestas de la hoja de revisión y respaldos de la referencia, si se guardan fuera de backend/data/
+respuestas_revision*.json
+*.backup_*.json
+
 # Notas personales de ideas no aprobadas (se conservan localmente, no en Git)
 docs/idea_base_conocimiento_x_live_medios*.md
 

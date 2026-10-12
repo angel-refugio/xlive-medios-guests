@@ -25,6 +25,27 @@ Claude y los contactos; todo hecho, probado y commiteado:
   (`_duplicate_copy_clause`), sin migración.
 - Interfaz en tema oscuro.
 
+**Pendiente acordado (2026-10-12): instrucciones v6.** La fase queda así. Con 40 videos revisados
+(37 invitados aceptados, 4 rechazados, 3 agregados a mano) aún no hay un patrón claro. De los 4
+rechazos, 2 no fueron errores de nombre sino videos que no cuentan (uno ya no está disponible en
+YouTube y tenía duración 0; otro es una intro de 14 s): quitándolos, ~95 % de precisión y ~92 % de
+cobertura. En cuanto se revisen ~100 videos y antes de la carga masiva (Fase 7):
+medir los errores con las correcciones del usuario, hacer un solo ajuste (v6) y validarlo con los
+siguientes 100 sin ajustar. Indicios vistos: tema del episodio tomado como nombre, alias de un
+invitado ya aceptado ("Dj rayas") y videos de menos de un minuto o de duración 0 (intros, videos
+que ya no están disponibles) que reciben un candidato con confianza 1.00 solo por el título; para
+la v6 conviene no proponer invitados en esos videos. Las omisiones vistas
+no se podían detectar: el invitado no está en el título ni en la descripción.
+
+**Pregunta abierta para la v6 (2026-10-12): ¿el extractor debe sugerir el tipo de talento?** Medido
+con los 176 videos de 60 s o más: solo 30 (17 %) mencionan alguna palabra de talento (cantante,
+vocalista, DJ, músico…); en los 34 revisados con invitados, la palabra aparece cerca del nombre en
+7 (20 %). Opciones: (a) sugerir solo cuando el texto lo diga de forma explícita; (b) usar el programa
+como pista débil; (c) usar el conocimiento de Claude sobre personas conocidas, marcado como
+suposición (riesgo de inventar, va contra la regla de no inventar datos); (d) no sugerir y que el
+talento se asigne al revisar con una lista corta. Sin decidir; recomendación: (a) + (d). También
+pendiente: varios "invitados" son grupos, gimnasios o academias, no personas.
+
 **Decisión (2026-10-08): el extractor por API de Anthropic se hace al final, después de la carga
 histórica masiva (Fase 7).** Mientras tanto, la carga masiva usa Claude Code (`claude -p`) con el
 mismo importador. Requisitos para retomarlo: API key en `.env`, aprobación del supervisor y una

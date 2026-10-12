@@ -9,8 +9,7 @@ Todo lo que este módulo guarda en staging sigue siendo candidato: nada se vuelv
 contacto o participación final sin pasar por Staging Review (paso 7, todavía sin implementar).
 """
 import logging
-import unicodedata
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -23,7 +22,7 @@ from app.models.ingestion import (
     StagingVideoSuggestion,
 )
 from app.models.video import Video
-from app.services import candidate_classifier, ollama_client, regex_rules, series_profile
+from app.services import candidate_classifier, duplicates, ollama_client, regex_rules, series_profile
 from app.services.candidate_classifier import CandidateClassification, ClassifierError
 from app.services.catalogs import normalize_name
 from app.services.ingestion import sync_videos
@@ -35,11 +34,6 @@ DEFAULT_BATCH_SIZE = 30
 # Mismo canal que backend/scripts/sample_videos.py; el sistema es de un solo canal, no
 # multi-tenant, así que no se guarda como variable de entorno.
 CHANNEL_HANDLE = "xlivemedios"
-
-# Duplicados reales: minutos a una semana de diferencia; episodios distintos de un programa
-# recurrente con descripción idéntica: meses (evidencia real de 150 videos, ver
-# docs/PHASE3_PLAN.md). 14 días separa ambos casos con margen.
-DUPLICATE_MAX_TIMEDELTA = timedelta(days=14)
 
 # Ajuste de confianza (regla del pipeline: título+descripción a favor, solo descripción
 # neutro, ambigüedad persona/banda en contra). Valores iniciales, ajustables tras validar
@@ -271,46 +265,6 @@ def _name_found_where(name: str, title: str, description: str | None) -> tuple[b
     return normalized in normalize_name(title), normalized in normalize_name(description or "")
 
 
-def _normalize_for_duplicate_check(text: str) -> str:
-    """`normalize_name` + quita emoji/símbolos (categoría Unicode "So").
-
-    Caso real (evidencia de la primera corrida real): el canal sube el mismo video dos veces
-    con el único cambio de un emoji al final del título (p. ej. "...Arween Tarot" vs
-    "...Arween Tarot 📱"), segundos o minutos aparte y con la descripción idéntica byte por
-    byte. `normalize_name` (pensado para nombres de catálogo) no toca emoji, así que sin esto
-    esos pares nunca se detectaban como duplicados.
-    """
-    without_symbols = "".join(c for c in text if unicodedata.category(c) != "So")
-    return normalize_name(without_symbols)
-
-
-def _find_possible_duplicate(db: Session, video: Video) -> Video | None:
-    """Otro video con título+descripción normalizados iguales y published_at cercano."""
-    if video.published_at is None:
-        return None
-    title_key = _normalize_for_duplicate_check(video.title)
-    description_key = _normalize_for_duplicate_check(video.description or "")
-    window_start = video.published_at - DUPLICATE_MAX_TIMEDELTA
-    window_end = video.published_at + DUPLICATE_MAX_TIMEDELTA
-    candidates = db.scalars(
-        select(Video)
-        .where(
-            Video.id != video.id,
-            Video.published_at.is_not(None),
-            Video.published_at >= window_start,
-            Video.published_at <= window_end,
-        )
-        .order_by(Video.published_at)
-    )
-    for other in candidates:
-        if (
-            _normalize_for_duplicate_check(other.title) == title_key
-            and _normalize_for_duplicate_check(other.description or "") == description_key
-        ):
-            return other
-    return None
-
-
 def process_video(
     db: Session,
     ollama_http_client: httpx.Client,
@@ -431,9 +385,8 @@ def process_video(
     if regex_rules.is_no_guests_candidate(video.title, video.description):
         video.guest_status = "no_guests"
 
-    duplicate = _find_possible_duplicate(db, video)
-    if duplicate is not None:
-        video.possible_duplicate_of_video_id = duplicate.id
+    # Marca el par de duplicados y, si la copia ya estaba revisada, hereda esa revisión.
+    duplicates.reconcile(db, video)
 
     video.last_ingested_at = datetime.now(timezone.utc)
     db.commit()

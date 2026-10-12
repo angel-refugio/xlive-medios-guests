@@ -62,6 +62,7 @@ def run(args: argparse.Namespace, db: Session) -> int:
         f"sin asignar: {summary.unassigned_contacts})"
     )
     print(f"Pendientes reemplazados: {summary.replaced_pending} · ya revisados y respetados: {summary.skipped_reviewed}")
+    print(f"Videos que forman un par duplicado (📱): {summary.duplicates} · heredaron lo ya revisado de su copia: {summary.inherited_reviews}")
     if summary.missing_videos:
         print(
             f"{len(summary.missing_videos)} video(s) no están en la BD y se omitieron "

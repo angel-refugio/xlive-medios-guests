@@ -27,6 +27,7 @@ from app.schemas.staging import (
 )
 from app.services import catalogs as catalogs_service
 from app.services import contacts as contacts_service
+from app.services import duplicates
 from app.services import guests as guests_service
 from app.services import participations as participations_service
 from app.services import staging as staging_service
@@ -73,22 +74,27 @@ def _pending_suggestion_exists():
     )
 
 
-MOBILE_MARK = "📱"
+MOBILE_MARK = duplicates.MOBILE_MARK
 
 
 def _duplicate_copy_clause():
     """El video es la COPIA de un par de posibles duplicados y no la que se conserva.
 
-    El canal sube el mismo video dos veces, una con 📱 al final del título, y la ingesta marca cada
-    uno como duplicado del otro. Se conserva el que no tiene 📱; si los dos son iguales en eso, el
-    de menor id. La copia no se borra: sale de la cola de revisión y se consulta en "Posibles
-    duplicados".
+    El canal sube el mismo video dos veces, una con 📱 al final del título, y la ingesta los marca
+    entre sí (`duplicates.reconcile`). Se conserva el que no tiene 📱; si los dos son iguales en
+    eso, el de menor id. La copia no se borra: sale de la cola de revisión y se consulta en
+    "Posibles duplicados". El enlace cuenta en CUALQUIER sentido (A apunta a B o B apunta a A), así
+    que da igual cuál de los dos llegó primero.
     """
     original = aliased(Video)
     mobile = Video.title.contains(MOBILE_MARK)
     original_mobile = original.title.contains(MOBILE_MARK)
     return exists().where(
-        original.id == Video.possible_duplicate_of_video_id,
+        original.id != Video.id,
+        or_(
+            original.id == Video.possible_duplicate_of_video_id,
+            original.possible_duplicate_of_video_id == Video.id,
+        ),
         or_(
             and_(mobile, ~original_mobile),
             and_(or_(and_(mobile, original_mobile), and_(~mobile, ~original_mobile)),

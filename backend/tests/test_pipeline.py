@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.models.ingestion import IngestionRun, IngestionRunError, StagingContactCandidate, StagingGuestCandidate
 from app.models.video import Video
-from app.services import pipeline
+from app.services import duplicates, pipeline
 
 MINIMAL_ANALYSIS = {
     "no_guests_opinion": False, "guests": [], "contacts": [],
@@ -223,7 +223,7 @@ def test_process_video_marca_posible_duplicado_dentro_de_la_ventana(session):
     original = _video("orig", title="Mismo Titulo", description="Misma descripcion",
                        published_at=datetime(2024, 1, 1, tzinfo=timezone.utc))
     nuevo = _video("nuevo", title="MISMO TITULO", description="misma descripcion",
-                    published_at=datetime(2024, 1, 5, tzinfo=timezone.utc))
+                    published_at=datetime(2024, 1, 3, tzinfo=timezone.utc))
     session.add_all([original, nuevo])
     session.commit()
 
@@ -268,8 +268,8 @@ def test_process_video_marca_duplicado_con_emoji_de_mas_en_el_titulo(session):
 
 def test_normalize_for_duplicate_check_quita_emoji():
     assert (
-        pipeline._normalize_for_duplicate_check("Con las Estrellas Arween Tarot 📱")
-        == pipeline._normalize_for_duplicate_check("Con las Estrellas Arween Tarot")
+        duplicates.normalize_for_duplicate_check("Con las Estrellas Arween Tarot 📱")
+        == duplicates.normalize_for_duplicate_check("Con las Estrellas Arween Tarot")
     )
 
 

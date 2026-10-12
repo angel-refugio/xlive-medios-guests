@@ -31,7 +31,7 @@ from app.models.contact import normalize_contact_value
 from app.models.ingestion import StagingContactCandidate, StagingGuestCandidate, StagingVideoSuggestion
 from app.models.video import Video
 from app.schemas.claude_extraction import BatchExtraction, ContactCandidate, VideoExtraction
-from app.services import claude_extraction, ingestion, series_profile
+from app.services import claude_extraction, duplicates, ingestion, series_profile
 from app.services.catalogs import normalize_name
 from app.services.pipeline import _adjust_confidence, _name_found_where
 
@@ -64,6 +64,8 @@ class VideoImport:
     skipped_reviewed: int = 0
     replaced_pending: int = 0
     suggestion: bool = False
+    duplicate_of: int | None = None       # id del gemelo, si el video es parte de un par de duplicados
+    inherited_review: bool = False        # el video heredó lo ya revisado de su copia
 
 
 @dataclass
@@ -76,6 +78,8 @@ class BatchImport:
     skipped_reviewed: int = 0
     replaced_pending: int = 0
     suggestions: int = 0
+    duplicates: int = 0
+    inherited_reviews: int = 0
     created_videos: int = 0
     missing_videos: list[str] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
@@ -89,6 +93,8 @@ class BatchImport:
         self.skipped_reviewed += one.skipped_reviewed
         self.replaced_pending += one.replaced_pending
         self.suggestions += int(one.suggestion)
+        self.duplicates += int(one.duplicate_of is not None)
+        self.inherited_reviews += int(one.inherited_review)
 
 
 def _fail(function: str, detail: str, cause: Exception | None = None) -> ClaudeImportError:
@@ -249,6 +255,11 @@ def import_video(
     if video.last_ingested_at is None:
         video.last_ingested_at = datetime.now(timezone.utc)
     db.flush()
+    # Marca el par de duplicados (📱) y, si la copia ya estaba revisada, hereda esa revisión.
+    twin = duplicates.reconcile(db, video)
+    if twin is not None:
+        result.duplicate_of = twin.twin_id
+        result.inherited_review = twin.inherited
     return result
 
 

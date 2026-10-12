@@ -413,7 +413,7 @@ def test_resolve_with_nothing_changes_nothing(api_client, api_engine):
     assert body == {
         "video_id": video_id, "guest_status": "pending", "accepted_guest_ids": [],
         "rejected_count": 0, "program_id": None, "host_ids": [],
-        "accepted_contact_ids": [], "rejected_contact_count": 0,
+        "accepted_contact_ids": [], "rejected_contact_count": 0, "added_contact_ids": [],
     }
     assert _status(api_engine, c1) == "pending"
 
@@ -558,6 +558,85 @@ def test_resolve_contacto_repetido_se_vincula_al_existente_sin_duplicar(api_clie
         assert s.scalar(select(func.count(Contact.id))) == 1
         assert s.get(StagingContactCandidate, c1).linked_contact_id == existing_id
     assert _status(api_engine, g1) == "accepted"
+
+
+# --- contactos capturados a mano (vistos dentro del video) -------------------------------------
+
+def test_resolve_crea_el_contacto_manual_con_el_video_de_origen(api_client, api_engine):
+    types = _seed_types(api_engine, "Celular")
+    video_id, (g1,) = _seed_video(api_engine, guests=[("Ana", 0.9)])
+    body = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], added_contacts=[{
+        "contact_type_id": types["Celular"], "value": " 5512345678 ", "relationship_id": types["_manager"],
+        "guest_candidate_id": g1,
+    }]).json()
+
+    assert len(body["added_contact_ids"]) == 1 and body["accepted_contact_ids"] == []
+    with Session(api_engine) as s:
+        contact = s.get(Contact, body["added_contact_ids"][0])
+        assert contact.guest_id == body["accepted_guest_ids"][0]
+        assert (contact.value, contact.source, contact.verified) == ("5512345678", "manual", False)
+        assert (contact.relationship_id, contact.video_id) == (types["_manager"], video_id)
+        assert contact.evidence == "Visto en el video"
+
+
+def test_resolve_agrega_un_contacto_manual_a_un_invitado_ya_revisado_y_a_uno_agregado_a_mano(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, _ = _seed_video(api_engine, status="has_guests")
+    with Session(api_engine) as s:
+        ana = Guest(full_name="Ana")
+        s.add(ana)
+        s.commit()
+        ana_id = ana.id
+    first = _resolve(api_client, video_id, added_contacts=[{
+        "contact_type_id": types["Correo"], "value": "ana@mail.com", "existing_guest_id": ana_id,
+    }])
+    assert first.status_code == 200
+    second = _resolve(api_client, video_id, added_guests=[{"full_name": "Luis Pérez"}], added_contacts=[{
+        "contact_type_id": types["Correo"], "value": "luis@mail.com", "added_guest_name": "luis perez",
+    }]).json()
+    with Session(api_engine) as s:
+        assert s.get(Contact, first.json()["added_contact_ids"][0]).guest_id == ana_id
+        assert s.get(Contact, second["added_contact_ids"][0]).guest_id == second["accepted_guest_ids"][0]
+
+
+def test_resolve_contacto_manual_repetido_no_se_duplica(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, _ = _seed_video(api_engine, status="has_guests")
+    with Session(api_engine) as s:
+        ana = Guest(full_name="Ana")
+        s.add(ana)
+        s.commit()
+        existing = Contact(guest_id=ana.id, contact_type_id=types["Correo"], value="ana@mail.com")
+        s.add(existing)
+        s.commit()
+        ana_id, existing_id = ana.id, existing.id
+    resp = _resolve(api_client, video_id, added_contacts=[{
+        "contact_type_id": types["Correo"], "value": "ANA@mail.com", "existing_guest_id": ana_id,
+    }])
+    assert resp.status_code == 200 and resp.json()["added_contact_ids"] == [existing_id]
+    with Session(api_engine) as s:
+        assert s.scalar(select(func.count(Contact.id))) == 1
+
+
+def test_resolve_valida_los_contactos_manuales_antes_de_escribir(api_client, api_engine):
+    types = _seed_types(api_engine, "Correo")
+    video_id, (g1, g2) = _seed_video(api_engine, guests=[("Ana", 0.9), ("Luis", 0.8)])
+    base = {"contact_type_id": types["Correo"], "value": "a@b.com", "guest_candidate_id": g1}
+    bad_cases = [
+        ({**base, "contact_type_id": 999}, 422),                       # tipo inexistente
+        ({**base, "relationship_id": 999}, 422),                       # relación inexistente
+        ({**base, "guest_candidate_id": g2}, 422),                     # su invitado no se acepta aquí
+        ({**base, "guest_candidate_id": None, "existing_guest_id": 999}, 404),
+        ({**base, "value": "   "}, 422),                               # valor vacío
+        ({"contact_type_id": types["Correo"], "value": "a@b.com"}, 422),  # sin invitado
+    ]
+    for contact, expected in bad_cases:
+        resp = _resolve(api_client, video_id, guests=[{"candidate_id": g1}], reject_candidate_ids=[],
+                        added_contacts=[contact])
+        assert resp.status_code == expected, (contact, resp.text)
+        assert _status(api_engine, g1) == "pending"                    # nada a medias
+    with Session(api_engine) as s:
+        assert s.scalar(select(func.count(Contact.id))) == 0
 
 
 def test_la_lista_ofrece_tipo_sugerido_invitado_del_contacto_y_participantes(api_client, api_engine):

@@ -572,6 +572,11 @@ button.danger {
   min-width: 9rem;
 }
 
+.contact-selects input {
+  flex: 2;
+  min-width: 12rem;
+}
+
 .contact-value {
   overflow-wrap: anywhere;
 }

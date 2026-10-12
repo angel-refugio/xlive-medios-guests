@@ -20,6 +20,7 @@ from app.models.ingestion import (
 from app.models.participation import Participation
 from app.models.video import Video
 from app.schemas.catalogs import CatalogCreate
+from app.schemas.contacts import ContactCreate
 from app.schemas.guests import GuestCreate
 from app.schemas.participations import ParticipationCreate
 from app.schemas.staging import (
@@ -388,22 +389,72 @@ def _validated_contacts(db: Session, video_id: int, data: ReviewResolve, accept_
         staging_service._ensure_pending(candidate, "contacto")  # 409 si ya se revisó
     added_names = {normalize_name(a.full_name) for a in data.added_guests}
     for item in data.contacts:
-        contacts_service._check_contact_type(db, item.contact_type_id, current_id=None)
-        if item.relationship_id is not None and db.get(ContactRelationship, item.relationship_id) is None:
-            msg = f"La relación de contacto {item.relationship_id} no existe"
-            logger.warning("[%s] %s", where, msg)
-            raise InvalidReferenceError(msg)
-        if item.guest_candidate_id is not None and item.guest_candidate_id not in accept_ids:
-            msg = (f"El contacto {item.candidate_id} apunta al candidato de invitado "
-                   f"{item.guest_candidate_id}, que no se acepta en esta resolución")
-            logger.warning("[%s] %s", where, msg)
-            raise ReviewInputError(msg)
-        if item.added_guest_name is not None and normalize_name(item.added_guest_name) not in added_names:
-            msg = f"El contacto {item.candidate_id} apunta a un invitado agregado que no existe en la resolución"
-            logger.warning("[%s] %s", where, msg)
-            raise ReviewInputError(msg)
-        if item.existing_guest_id is not None:
-            guests_service.get_guest(db, item.existing_guest_id)  # 404 si no existe
+        _check_contact_references(db, item, f"El contacto {item.candidate_id}", accept_ids, added_names)
+    for number, item in enumerate(data.added_contacts, start=1):
+        _check_contact_references(db, item, f"El contacto agregado {number}", accept_ids, added_names)
+
+
+def _check_contact_references(db: Session, item, label: str, accept_ids: list[int], added_names: set[str]) -> None:
+    """Tipo, relación e invitado de un contacto (aceptado o agregado a mano) deben existir."""
+    where = "app.services.staging_review._check_contact_references"
+    contacts_service._check_contact_type(db, item.contact_type_id, current_id=None)
+    if item.relationship_id is not None and db.get(ContactRelationship, item.relationship_id) is None:
+        msg = f"La relación de contacto {item.relationship_id} no existe"
+        logger.warning("[%s] %s", where, msg)
+        raise InvalidReferenceError(msg)
+    if item.guest_candidate_id is not None and item.guest_candidate_id not in accept_ids:
+        msg = (f"{label} apunta al candidato de invitado {item.guest_candidate_id}, "
+               "que no se acepta en esta resolución")
+        logger.warning("[%s] %s", where, msg)
+        raise ReviewInputError(msg)
+    if item.added_guest_name is not None and normalize_name(item.added_guest_name) not in added_names:
+        msg = f"{label} apunta a un invitado agregado que no existe en la resolución"
+        logger.warning("[%s] %s", where, msg)
+        raise ReviewInputError(msg)
+    if item.existing_guest_id is not None:
+        guests_service.get_guest(db, item.existing_guest_id)  # 404 si no existe
+
+
+def _guest_id_of(item, guest_by_candidate: dict[int, int], guest_by_added: dict[str, int]) -> int:
+    if item.guest_candidate_id is not None:
+        return guest_by_candidate[item.guest_candidate_id]
+    if item.added_guest_name is not None:
+        return guest_by_added[normalize_name(item.added_guest_name)]
+    return item.existing_guest_id
+
+
+MANUAL_CONTACT_EVIDENCE = "Visto en el video"
+
+
+def _apply_added_contacts(
+    db: Session, video_id: int, data: ReviewResolve,
+    guest_by_candidate: dict[int, int], guest_by_added: dict[str, int],
+) -> list[int]:
+    """Crea los contactos que quien revisa capturó a mano: origen manual, con el video donde los
+    vio. Si el invitado ya tenía ese contacto no se duplica: se devuelve el existente."""
+    created: list[int] = []
+    for item in data.added_contacts:
+        guest_id = _guest_id_of(item, guest_by_candidate, guest_by_added)
+        try:
+            contact = contacts_service.create_contact(db, guest_id, ContactCreate(
+                contact_type_id=item.contact_type_id, value=item.value, source="manual", verified=False,
+            ))
+        except ContactDuplicateError:
+            created.append(db.execute(select(Contact.id).where(
+                Contact.guest_id == guest_id, Contact.contact_type_id == item.contact_type_id,
+                Contact.normalized_value == normalize_contact_value(item.value),
+            )).scalar_one())
+            logger.info(
+                "[app.services.staging_review._apply_added_contacts] El invitado %s ya tenía ese "
+                "contacto: no se duplica", guest_id,
+            )
+            continue
+        contact.relationship_id = item.relationship_id
+        contact.video_id = video_id
+        contact.evidence = MANUAL_CONTACT_EVIDENCE
+        db.commit()
+        created.append(contact.id)
+    return created
 
 
 def _apply_contacts(
@@ -413,12 +464,7 @@ def _apply_contacts(
     el candidato se cierra apuntando al existente (no se duplica ni se falla a medias)."""
     accepted_ids: list[int] = []
     for item in data.contacts:
-        if item.guest_candidate_id is not None:
-            guest_id = guest_by_candidate[item.guest_candidate_id]
-        elif item.added_guest_name is not None:
-            guest_id = guest_by_added[normalize_name(item.added_guest_name)]
-        else:
-            guest_id = item.existing_guest_id
+        guest_id = _guest_id_of(item, guest_by_candidate, guest_by_added)
         accept = ContactCandidateAccept(
             guest_id=guest_id, contact_type_id=item.contact_type_id, value=item.value,
             relationship_id=item.relationship_id,
@@ -511,6 +557,7 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
         accepted_guest_ids.append(guest.id)
 
     accepted_contact_ids, rejected_contacts = _apply_contacts(db, data, guest_by_candidate, guest_by_added)
+    added_contact_ids = _apply_added_contacts(db, video_id, data, guest_by_candidate, guest_by_added)
 
     if data.no_guests:
         for candidate in db.execute(
@@ -532,4 +579,5 @@ def resolve_video(db: Session, video_id: int, data: ReviewResolve) -> dict:
         "accepted_guest_ids": accepted_guest_ids, "rejected_count": rejected,
         "program_id": video.program_id, "host_ids": host_ids,
         "accepted_contact_ids": accepted_contact_ids, "rejected_contact_count": rejected_contacts,
+        "added_contact_ids": added_contact_ids,
     }

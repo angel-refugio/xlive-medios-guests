@@ -181,6 +181,9 @@ function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, 
       };
     })
   );
+  // Contactos que se capturan a mano (los que se ven dentro del video, no en el título ni la descripción).
+  const [addedContacts, setAddedContacts] = useState([]);
+  const [newContact, setNewContact] = useState({ typeId: "", value: "", relationshipId: "", ref: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -222,15 +225,40 @@ function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, 
     }
   }
 
+  function addContact() {
+    const value = newContact.value.trim();
+    if (!newContact.typeId || !value || !validRefs.has(newContact.ref)) {
+      setError("Para agregar un contacto elige el tipo y el invitado, y escribe el valor");
+      return;
+    }
+    setError("");
+    setAddedContacts((prev) => [...prev, { ...newContact, value }]);
+    setNewContact({ typeId: "", value: "", relationshipId: "", ref: newContact.ref });   // suelen ser varios del mismo invitado
+  }
+
   // Decisión sobre los contactos; null (con el error mostrado) si falta tipo o invitado en alguno aceptado.
   function contactsPayload() {
-    if (contactRows.length === 0) return {};
+    const extra = {};
+    if (addedContacts.length > 0) {
+      if (addedContacts.some((c) => !validRefs.has(c.ref))) {
+        setError("Un contacto agregado apunta a un invitado que quitaste: quítalo o vuelve a agregar al invitado");
+        return null;
+      }
+      extra.added_contacts = addedContacts.map((c) => ({
+        contact_type_id: Number(c.typeId),
+        value: c.value,
+        ...(c.relationshipId ? { relationship_id: Number(c.relationshipId) } : {}),
+        ...guestReference(c.ref),
+      }));
+    }
+    if (contactRows.length === 0) return extra;
     const accepted = contactRows.filter((r) => r.accept);
     if (accepted.some((r) => !r.typeId || !refOf(r))) {
       setError("Elige el tipo y el invitado de cada contacto que aceptas");
       return null;
     }
     return {
+      ...extra,
       contacts: accepted.map((r) => {
         const relationshipId = relationshipOf(r);
         return {
@@ -332,7 +360,7 @@ function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, 
       ? "Descartar candidatos"
       : hasMeta
         ? "Guardar programa y conductores"
-        : contactRows.length > 0
+        : contactRows.length > 0 || addedContacts.length > 0
           ? "Guardar contactos"
           : null;
 
@@ -609,6 +637,87 @@ function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, 
           </div>
         )}
 
+        <div className="add-contact contacts-field">
+          <strong>Agregar contacto</strong>
+          <small className="muted">Para un contacto que ves dentro del video (no está en el título ni en la descripción).</small>
+          <div className="contact-selects">
+            <select
+              aria-label="Tipo del contacto nuevo"
+              value={newContact.typeId}
+              onChange={(e) => setNewContact((prev) => ({ ...prev, typeId: e.target.value }))}
+              disabled={busy}
+            >
+              <option value="">— Tipo —</option>
+              {contactTypes.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label="Valor del contacto nuevo"
+              placeholder="Valor (teléfono, correo, @usuario…)"
+              value={newContact.value}
+              onChange={(e) => setNewContact((prev) => ({ ...prev, value: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addContact();
+                }
+              }}
+              maxLength={500}
+              disabled={busy}
+            />
+            <select
+              aria-label="Invitado del contacto nuevo"
+              value={validRefs.has(newContact.ref) ? newContact.ref : ""}
+              onChange={(e) => setNewContact((prev) => ({ ...prev, ref: e.target.value }))}
+              disabled={busy}
+            >
+              <option value="">— Invitado —</option>
+              {guestOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label="Relación del contacto nuevo"
+              value={newContact.relationshipId}
+              onChange={(e) => setNewContact((prev) => ({ ...prev, relationshipId: e.target.value }))}
+              disabled={busy}
+            >
+              <option value="">— Relación —</option>
+              {relationships.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" onClick={addContact} disabled={busy}>
+              Agregar contacto
+            </button>
+          </div>
+          {addedContacts.length > 0 && (
+            <ul className="chips" aria-label="Contactos agregados">
+              {addedContacts.map((c, index) => (
+                <li key={`${c.ref}-${c.typeId}-${c.value}`}>
+                  <strong>{contactTypes.find((t) => String(t.id) === c.typeId)?.name}:</strong> {c.value} ·{" "}
+                  {guestOptions.find((o) => o.value === c.ref)?.label ?? "invitado quitado"}{" "}
+                  <button
+                    type="button"
+                    aria-label={`Quitar contacto ${c.value}`}
+                    onClick={() => setAddedContacts((prev) => prev.filter((_, i) => i !== index))}
+                    disabled={busy}
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {error && (
           <p role="alert" className="error">
             {error}
@@ -621,7 +730,7 @@ function VideoReviewCard({ video, programs, hosts, contactTypes, relationships, 
             </button>
           )}
           {video.guest_status === "pending" && (
-            <button type="button" onClick={markNoGuests} disabled={busy || added.length > 0 || hostsWithoutProgram}>
+            <button type="button" onClick={markNoGuests} disabled={busy || added.length > 0 || addedContacts.length > 0 || hostsWithoutProgram}>
               Sin invitados
             </button>
           )}

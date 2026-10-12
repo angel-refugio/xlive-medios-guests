@@ -519,15 +519,16 @@ export function createFakeBackend({
       for (const item of added) guestByAdded[item.full_name.toLowerCase()] = linkGuest(item.full_name);
       // Contactos: se aceptan atribuidos a un invitado (candidato aceptado, agregado o existente).
       const acceptedContactIds = [];
+      const guestIdOf = (item) =>
+        item.guest_candidate_id != null
+          ? guestByCandidate[item.guest_candidate_id]
+          : item.added_guest_name != null
+            ? guestByAdded[item.added_guest_name.toLowerCase()]
+            : item.existing_guest_id;
       for (const item of body.contacts ?? []) {
         const candidate = db.contactCandidates.find((c) => c.id === item.candidate_id);
         if (!candidate) return fakeResponse(404, { detail: `No existe el candidato de contacto ${item.candidate_id}` });
-        const guestId =
-          item.guest_candidate_id != null
-            ? guestByCandidate[item.guest_candidate_id]
-            : item.added_guest_name != null
-              ? guestByAdded[item.added_guest_name.toLowerCase()]
-              : item.existing_guest_id;
+        const guestId = guestIdOf(item);
         if (!guestId) return fakeResponse(422, { detail: "El contacto apunta a un invitado que no se registra" });
         const contact = {
           id: db.nextId++,
@@ -547,6 +548,26 @@ export function createFakeBackend({
       for (const id of body.reject_contact_ids ?? []) {
         const candidate = db.contactCandidates.find((c) => c.id === id);
         if (candidate) candidate.status = "rejected";
+      }
+      // Contactos capturados a mano: entran como manuales, con el video de origen.
+      const addedContactIds = [];
+      for (const item of body.added_contacts ?? []) {
+        const guestId = guestIdOf(item);
+        if (!guestId) return fakeResponse(422, { detail: "El contacto agregado apunta a un invitado que no se registra" });
+        const contact = {
+          id: db.nextId++,
+          guest_id: guestId,
+          contact_type: catalogItem("contact-types", item.contact_type_id),
+          value: item.value,
+          note: null,
+          source: "manual",
+          verified: false,
+          video_id: video.id,
+          evidence: "Visto en el video",
+          relationship: catalogItem("contact-relationships", item.relationship_id),
+        };
+        db.contacts.push(contact);
+        addedContactIds.push(contact.id);
       }
       let rejected = rejectIds.length;
       if (body.no_guests) {
@@ -576,6 +597,7 @@ export function createFakeBackend({
         video_id: video.id, guest_status: video.guest_status, accepted_guest_ids: acceptedIds,
         rejected_count: rejected, program_id: video.program?.id ?? null, host_ids: hostIds,
         accepted_contact_ids: acceptedContactIds, rejected_contact_count: (body.reject_contact_ids ?? []).length,
+        added_contact_ids: addedContactIds,
       });
     }
 

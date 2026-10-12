@@ -434,6 +434,95 @@ describe("Revisión por video", () => {
     expect(card.queryByRole("button", { name: /Crear tipo/ })).not.toBeInTheDocument();
   });
 
+  // Contactos capturados a mano (vistos dentro del video).
+  async function addManualContact(user, card, { type, value, guest, relationship }) {
+    await user.selectOptions(card.getByLabelText("Tipo del contacto nuevo"), type);
+    await user.type(card.getByLabelText("Valor del contacto nuevo"), value);
+    await user.selectOptions(card.getByLabelText("Invitado del contacto nuevo"), guest);
+    if (relationship) await user.selectOptions(card.getByLabelText("Relación del contacto nuevo"), relationship);
+    await user.click(card.getByRole("button", { name: "Agregar contacto" }));
+  }
+
+  it("agrega un contacto visto en el video y lo guarda junto con «Correcto»", async () => {
+    const { fetchMock, db } = createFakeBackend({ videos: [video1], guestCandidates: [guestCandidate1] });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await addManualContact(user, card, { type: "Celular", value: "5512345678", guest: "Karimm Kury", relationship: "manager" });
+    expect(card.getByRole("list", { name: "Contactos agregados" })).toHaveTextContent("5512345678");
+    await user.click(card.getByRole("button", { name: "Correcto" }));
+
+    await waitFor(() => expect(db.contacts).toHaveLength(1));
+    expect(contactBody(fetchMock)).toMatchObject({
+      guests: [{ candidate_id: 10 }],
+      added_contacts: [{ contact_type_id: 1, value: "5512345678", relationship_id: 2, guest_candidate_id: 10 }],
+    });
+    expect(db.contacts[0]).toMatchObject({ source: "manual", evidence: "Visto en el video" });
+  });
+
+  it("no agrega un contacto sin tipo, invitado o valor", async () => {
+    createFakeBackend({ videos: [video1], guestCandidates: [guestCandidate1] });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await user.click(card.getByRole("button", { name: "Agregar contacto" }));
+    expect(await card.findByRole("alert")).toHaveTextContent("elige el tipo y el invitado, y escribe el valor");
+    expect(card.queryByRole("list", { name: "Contactos agregados" })).not.toBeInTheDocument();
+  });
+
+  it("un contacto agregado se puede quitar antes de guardar", async () => {
+    const { fetchMock } = createFakeBackend({ videos: [video1], guestCandidates: [guestCandidate1] });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await addManualContact(user, card, { type: "Correo", value: "k@mail.com", guest: "Karimm Kury" });
+    await user.click(card.getByRole("button", { name: "Quitar contacto k@mail.com" }));
+    expect(card.queryByRole("list", { name: "Contactos agregados" })).not.toBeInTheDocument();
+    await user.click(card.getByRole("button", { name: "Correcto" }));
+    await waitFor(() => expect(callsTo(fetchMock, "POST", "/resolve")).toHaveLength(1));
+    expect(contactBody(fetchMock)).not.toHaveProperty("added_contacts");
+  });
+
+  it("en un video ya revisado se agrega un contacto a un invitado registrado", async () => {
+    const { fetchMock, db } = createFakeBackend({
+      videos: [{ ...video1, guest_status: "has_guests" }],
+      guests: [{ id: 5, full_name: "Karimm Kury", categories: [], borough: null }],
+      participations: [{ id: 1, guest_id: 5, video_id: 1, notes: null }],
+    });
+    const user = userEvent.setup();
+    renderApp("/staging/review?filter=reviewed");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await addManualContact(user, card, { type: "Correo", value: "k@mail.com", guest: "Karimm Kury (ya registrado)" });
+    await user.click(card.getByRole("button", { name: "Guardar contactos" }));
+
+    await waitFor(() => expect(db.contacts).toHaveLength(1));
+    expect(contactBody(fetchMock).added_contacts).toMatchObject([{ contact_type_id: 2, value: "k@mail.com", existing_guest_id: 5 }]);
+    expect(db.contacts[0].guest_id).toBe(5);
+  });
+
+  it("«Sin invitados» queda desactivado si hay un contacto agregado (no se perdería en silencio)", async () => {
+    createFakeBackend({ videos: [video1], guestCandidates: [guestCandidate1] });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await addManualContact(user, card, { type: "Correo", value: "k@mail.com", guest: "Karimm Kury" });
+    expect(card.getByRole("button", { name: "Sin invitados" })).toBeDisabled();
+  });
+
+  it("si se quita al invitado de un contacto agregado, no deja guardar", async () => {
+    const { fetchMock } = createFakeBackend({ videos: [video1], guestCandidates: [guestCandidate1] });
+    const user = userEvent.setup();
+    renderApp("/staging/review");
+    const card = within(await screen.findByRole("article", { name: "con Karimm Kury" }));
+    await user.type(card.getByLabelText("Agregar invitado"), "Luis Pérez");
+    await user.click(card.getByRole("button", { name: "Agregar" }));
+    await addManualContact(user, card, { type: "Correo", value: "luis@mail.com", guest: "Luis Pérez" });
+    await user.click(card.getByRole("button", { name: "Quitar Luis Pérez" }));
+    await user.click(card.getByRole("button", { name: "Correcto" }));
+    expect(await card.findByRole("alert")).toHaveTextContent("apunta a un invitado que quitaste");
+    expect(callsTo(fetchMock, "POST", "/resolve")).toHaveLength(0);
+  });
+
   it("no ofrece crear un tipo para pistas genéricas como handle", async () => {
     createFakeBackend({
       videos: [video1], guestCandidates: [guestCandidate1],

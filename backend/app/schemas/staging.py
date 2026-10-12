@@ -251,20 +251,14 @@ class ReviewAddedGuest(BaseModel):
         return value
 
 
-class ReviewContactAccept(BaseModel):
-    """Acepta un contacto candidato del video y lo atribuye a un invitado. El invitado se indica
-    con EXACTAMENTE una referencia: el candidato de invitado que se acepta en esta misma
-    resolución, el invitado agregado a mano (por su nombre) o un invitado que ya existe."""
+class _ContactGuestReference(BaseModel):
+    """El invitado de un contacto se indica con EXACTAMENTE una referencia: el candidato de
+    invitado que se acepta en esta misma resolución, el invitado agregado a mano (por su nombre)
+    o un invitado que ya existe."""
 
-    candidate_id: int
-    contact_type_id: int
-    relationship_id: int | None = None
-    value: str | None = None
     guest_candidate_id: int | None = None
     added_guest_name: str | None = None
     existing_guest_id: int | None = None
-
-    _clean_value = field_validator("value")(_clean_value)
 
     @model_validator(mode="after")
     def _exactly_one_guest_reference(self):
@@ -275,6 +269,28 @@ class ReviewContactAccept(BaseModel):
                 "added_guest_name o existing_guest_id"
             )
         return self
+
+
+class ReviewContactAccept(_ContactGuestReference):
+    """Acepta un contacto candidato del video y lo atribuye a un invitado."""
+
+    candidate_id: int
+    contact_type_id: int
+    relationship_id: int | None = None
+    value: str | None = None
+
+    _clean_value = field_validator("value")(_clean_value)
+
+
+class ReviewAddedContact(_ContactGuestReference):
+    """Contacto que quien revisa captura a mano (lo vio dentro del video, no en el texto). Entra
+    como contacto manual, con el video de origen."""
+
+    contact_type_id: int
+    value: str = Field(max_length=500)
+    relationship_id: int | None = None
+
+    _clean_value = field_validator("value")(_clean_value)
 
 
 class ReviewResolve(BaseModel):
@@ -294,6 +310,8 @@ class ReviewResolve(BaseModel):
     # Los pendientes que no se mencionan siguen pendientes.
     contacts: list[ReviewContactAccept] = []
     reject_contact_ids: list[int] = []
+    # Contactos capturados a mano (vistos dentro del video).
+    added_contacts: list[ReviewAddedContact] = []
 
     @field_validator("host_names")
     @classmethod
@@ -317,3 +335,4 @@ class ReviewResolveOut(BaseModel):
     host_ids: list[int] = []
     accepted_contact_ids: list[int] = []
     rejected_contact_count: int = 0
+    added_contact_ids: list[int] = []
